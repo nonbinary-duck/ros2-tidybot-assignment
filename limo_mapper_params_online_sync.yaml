@@ -1,6 +1,6 @@
 #
 # Params file for online SLAM launch
-#     Use with ros2 launch nav2_bringup slam_launch.py slam_params_file:=./limo_mapper_params_online_sync.yaml
+#     Use with ros2 launch nav2_bringup slam_launch.py slam_params_file:=./limo_mapper_params_online_sync.yaml params_file:=./limo_nav2_params.yaml
 #     Based on ROS2 the Humble default file
 #     Any lines changed from the default are indicated with a pre-statement comment showing the default value
 #
@@ -36,7 +36,7 @@ slam_toolbox:
     transform_publish_period: 0.02 #if 0 never publishes odometry
 
     # map_update_interval: 5.0
-    map_update_interval: 1.0 # Changed mapping frequency to increase feedback rate
+    map_update_interval: 1.0 # Improve responsiveness of the SLAM
     
     resolution: 0.05
 

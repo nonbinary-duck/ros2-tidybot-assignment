@@ -1,6 +1,6 @@
 #
 # Params file for nav2 stack launch
-#     Use with ros2 launch nav2_bringup slam_launch.py slam_params_file:=./limo_mapper_params_online_sync.yaml
+#     Use with ros2 launch nav2_bringup slam_launch.py slam_params_file:=./limo_mapper_params_online_sync.yaml params_file:=./limo_nav2_params.yaml
 #     Based on ROS2 the Humble default file
 #     Any lines changed from the default are indicated with a pre-statement comment showing the default value
 #
@@ -190,10 +190,8 @@ controller_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      update_frequency: 1.0 # Updated to match SLAM value
-      # update_frequency: 5.0
-      # publish_frequency: 2.0
-      publish_frequency: 0.4 # 
+      update_frequency: 5.0
+      publish_frequency: 2.0
       global_frame: odom
       robot_base_frame: base_link
       use_sim_time: True
