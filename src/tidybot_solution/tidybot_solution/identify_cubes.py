@@ -28,10 +28,27 @@ class IdentifyCubes(Node):
         # Setup a window to display stuff in
         cv2.namedWindow("Cube View", 1);
         # Setup some "constants"
-        cv2.LOWER_LIGHTNESS  = 20;
-        cv2.UPPER_LIGHTNESS  = 255;
-        cv2.LOWER_SATURATION = 150;
-        cv2.UPPER_SATURATION = 255;
+        self.LOWER_LIGHTNESS  = 20;
+        self.UPPER_LIGHTNESS  = 255;
+        self.LOWER_SATURATION = 150;
+        self.UPPER_SATURATION = 255;
+        # Define ranges for our colour recognition
+        #   The ranges are broad to accommodate the real world
+        # Define red ranges
+        self.LOWER_RED_LOWER = np.array((0,   self.LOWER_SATURATION, self.LOWER_LIGHTNESS));
+        # 28° (20) appears just in to orange to my eye & monitor
+        self.UPPER_RED_LOWER = np.array((20,  self.UPPER_SATURATION, self.UPPER_LIGHTNESS));
+
+        # Define the red ranges at the top of the scale
+        # 330° (235) appears just in to pink to my eye & monitor
+        self.LOWER_RED_UPPER = np.array((235, self.LOWER_SATURATION, self.LOWER_LIGHTNESS));
+        self.UPPER_RED_UPPER = np.array((255, self.UPPER_SATURATION, self.UPPER_LIGHTNESS));
+
+        # Define green values
+        # 76° looks like lime
+        self.LOWER_GREEN      = np.array((54,  self.LOWER_SATURATION, self.LOWER_LIGHTNESS));
+        # 150° looks like teal
+        self.UPPER_GREEN      = np.array((107, self.UPPER_SATURATION, self.UPPER_LIGHTNESS));
 
 
     def camera_callback(self, data):
@@ -57,17 +74,27 @@ class IdentifyCubes(Node):
         # be correctly reported, or affected by ambient diffusion
         # 
         # Convert our image to the HSV colour space
-        cv_image = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV);
+        # Write a new variable so we don't have to convert back to
+        # RGB later on for human viewing
+        cv_image_hsv = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV);
 
-        # Create a binary mask for red and green
-        red_thresh = cv2.inRange(cv_image, lowerb=np.array((0, 150, 50)), upperb=np.array((255, 255, 255)));
-        # 
-        red_thresh = cv2.bitwise_or();
+        # Create a mask for green
+        green_thresh = cv2.inRange(cv_image_hsv, lowerb=self.LOWER_GREEN, upperb=self.UPPER_GREEN);
+
+
+        # Create a binary mask for the lower red
+        red_thresh = cv2.inRange(cv_image, lowerb=self.LOWER_RED_LOWER, upperb=self.UPPER_RED_LOWER);
+        # Combine that image with the upper red threshold
+        red_thresh = cv2.bitwise_or(
+            red_thresh,
+            # Our upper red threshold
+            cv2.inRange(cv_image_hsv, lowerb=self.LOWER_RED_UPPER, upperb=self.UPPER_RED_UPPER)
+        );
 
         # Find contours in our mask
         contours, hierachy = cv2.findContours(
             # Since OpenCV 3.2 findContours doesn't modify the source image so we don't need .copy()
-            hsv_thresh,
+            green_thresh,
             # Return a tree hierarchy instead of a list, so that obviously related contours can form a tree
             cv2.RETR_TREE,
             # Simplify the contour to not return redundant information
@@ -84,7 +111,6 @@ class IdentifyCubes(Node):
                 cv2.drawContours(cv_image, c, -1, (255, 0, 255), 10);
                 # Print data into the image at the first vertex in the contour
                 cv2.putText(cv_image, f"{area}", org=c[0][0], fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 0, 0), thickness=2);
-        print('====');
 
         # Reduce the image size we render using imshow
         cv_image_small = cv2.resize(cv_image, (0,0), fx=0.75, fy=0.75);
