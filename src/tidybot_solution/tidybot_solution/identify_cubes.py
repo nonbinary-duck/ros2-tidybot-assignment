@@ -25,22 +25,29 @@ class ColourContours(Node):
     def camera_callback(self, data):
         #self.get_logger().info("camera_callback")
 
-        cv2.namedWindow("Image window", 1)
+        # Setup a window to display stuff in
+        cv2.namedWindow("Cube View", 1)
+
         try:
+            # Get the ros2 topic data and use the CvBridge instance
+            # to cast it into an OpenCV image
             cv_image = self.br.imgmsg_to_cv2(data, "bgr8")
+
+        # Ignore errors by printing them and stopping the execution 
+        # only of this callback
         except CvBridgeError as e:
             print(e)
+            return
 
-        # using the BGR colour space, create a mask for everything
-        # that is in a certain range
-        bgr_thresh = cv2.inRange(cv_image,
-                                 np.array((200, 230, 230)),
-                                 np.array((255, 255, 255)))
 
         # It often is better to use another colour space, that is
         # less sensitive to illumination (brightness) changes.
         # The HSV colour space is often a good choice. 
         # So, we first change the colour space here...
+        # HSV is also good because the hue differentiates
+        # between red/green for example
+        # 
+        # Convert our image to the HSV colour space
         hsv_img = cv2.cvtColor(cv_image, cv2.COLOR_BGR2HSV)
 
         # ... and now let's create a binary (mask) image, looking for 
@@ -52,39 +59,35 @@ class ColourContours(Node):
 
         # just for the fun of it, print the mean value 
         # of each HSV channel within the mask 
+        print("Mean of all HSV channels in mask:")
         print(cv2.mean(hsv_img[:, :, 0], mask = hsv_thresh)[0])
         print(cv2.mean(hsv_img[:, :, 1], mask = hsv_thresh)[0])
         print(cv2.mean(hsv_img[:, :, 2], mask = hsv_thresh)[0])
 
-        # This is how we could find actual contours in
-        # the BGR image, but we won't do this now.
-        # _, bgr_contours, hierachy = cv2.findContours(
-        #     bgr_thresh.copy(),
-        #     cv2.RETR_TREE,
-        #     cv2.CHAIN_APPROX_SIMPLE)
-
-        # Instead find the contours in the mask generated from the
-        # HSV image.
-        hsv_contours, hierachy = cv2.findContours(
-            hsv_thresh.copy(),
+        # Find contours in our mask
+        contours, hierachy = cv2.findContours(
+            # Since OpenCV 3.2 findContours doesn't modify the source image so we don't need .copy()
+            hsv_thresh,
+            # Return a tree hierarchy instead of a list, so that obviously related contours can form a tree
             cv2.RETR_TREE,
+            # Simplify the contour to not return redundant information
             cv2.CHAIN_APPROX_SIMPLE)
         
-        # in hsv_contours we now have an array of individual
-        # closed contours (basically a polgon around the 
-        # blobs in the mask). Let's iterate over all those found 
-        # contours.
-        for c in hsv_contours:
+        # Iterate over the contours we found in the segmented image
+        for c in contours:
             # This allows to compute the area (in pixels) of a contour
-            a = cv2.contourArea(c)
-            # and if the area is big enough, we draw the outline
-            # of the contour (in blue)
-            if a > 100.0:
-                cv2.drawContours(cv_image, c, -1, (0, 0, 255), 10)
+            area = cv2.contourArea(c)
+            
+            # Only operate on contours of a specified area
+            if area > 100.0:
+                # Draw the (simplified) outline of our contour
+                cv2.drawContours(cv_image, c, -1, (255, 0, 255), 10)
+                # Print data into the image at the first vertex in the contour
+                cv2.putText(cv_image, f"{area}", org=c[0][0], fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 0, 0), thickness=2)
         print('====')
 
-        cv_image_small = cv2.resize(cv_image, (0,0), fx=0.4, fy=0.4) # reduce image size
-        cv2.imshow("Image window", cv_image_small)
+        cv_image_small = cv2.resize(cv_image, (0,0), fx=0.75, fy=0.75) # reduce image size
+        cv2.imshow("Cube View", cv_image_small)
         
         cv2.waitKey(1)
 

@@ -1,0 +1,43 @@
+# 
+# A file to provide params for the Limo robot
+#     File obtained with ros2 param dump /limo/gazebo_ros_depth_camera_sensor
+#     Any changed value from that dump is un-commented
+#     Use with ros2 launch uol_tidybot tidybot.launch.py params_file:=./limo_params.yaml
+# 
+
+/limo/gazebo_ros_depth_camera_sensor:
+  ros__parameters:
+    # depth_camera_link:
+    #     depth:
+    #       image_raw:
+    #         format: jpeg
+    #         jpeg_quality: 95
+    #         png_level: 3
+    #         tiff:
+    #           res_unit: inch
+    #           xdpi: -1
+    #           ydpi: -1
+    #     image_raw:
+    #       format: jpeg
+    #       jpeg_quality: 95
+    #       png_level: 3
+    #       tiff:
+    #         res_unit: inch
+    #         xdpi: -1
+    #         ydpi: -1
+    # qos_overrides:
+    #   /clock:
+    #     subscription:
+    #       depth: 1
+    #       durability: volatile
+    #       history: keep_last
+    #       reliability: best_effort
+    #   /parameter_events:
+    #     publisher:
+    #       depth: 1000
+    #       durability: volatile
+    #       history: keep_last
+    #       reliability: reliable
+    # update_rate: 1.0
+    update_rate: 10.0 # Update the camera at 10Hz
+    # use_sim_time: true
