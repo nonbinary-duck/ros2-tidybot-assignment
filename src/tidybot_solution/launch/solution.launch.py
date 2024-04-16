@@ -32,7 +32,7 @@ def generate_launch_description():
                 "ros2 param set ",
                 "/limo/gazebo_ros_depth_camera_sensor ",
                 "update_rate ",
-                "20.0"
+                "10.0"
             ]],
             shell=True
         )
