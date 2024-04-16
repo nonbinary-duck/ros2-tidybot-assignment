@@ -16,27 +16,6 @@ def generate_launch_description():
     
     # Initialise a launch description object to add to
     ld = LaunchDescription();
-    
-    ld.add_action(
-        # Spawn some green cubes
-        Node(
-            package="uol_tidybot",
-            executable="generate_objects"
-        )
-    );
-
-    ld.add_action(
-        # Spawn some red cubes
-        #ros2 run  uol_tidybot generate_objects --ros-args -p red:=true -p n_objects:=10
-        Node(
-            package="uol_tidybot",
-            executable="generate_objects",
-            ros_arguments=[
-                "red:=true",
-                "m_objects:=10"
-            ]
-        )
-    );
 
     ld.add_action(
         # Launch our nodes
