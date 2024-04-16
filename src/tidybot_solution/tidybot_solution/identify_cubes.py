@@ -84,7 +84,7 @@ class IdentifyCubes(Node):
 
 
         # Create a binary mask for the lower red
-        red_thresh = cv2.inRange(cv_image, lowerb=self.LOWER_RED_LOWER, upperb=self.UPPER_RED_LOWER);
+        red_thresh = cv2.inRange(cv_image_hsv, lowerb=self.LOWER_RED_LOWER, upperb=self.UPPER_RED_LOWER);
         # Combine that image with the upper red threshold
         red_thresh = cv2.bitwise_or(
             red_thresh,
@@ -109,13 +109,15 @@ class IdentifyCubes(Node):
             # Only operate on contours of a specified area
             if area > 100.0:
 
-                # The bounding box and moments code is taken from the OpenCV Python documentation
+                # The bounding box and moments initialisation is taken from the OpenCV Python documentation
                 # https://docs.opencv.org/3.4/dd/d49/tutorial_py_contour_features.html
 
                 # Get the bounding box of this contour
                 bnd_x, bnd_y, bnd_w, bnd_h = cv2.boundingRect(c);
                 # Check if the centre of that rectangle is above or below the centre of the image
                 isCube  = (bnd_y + (bnd_h * 0.5)) > (cv_image.shape[0] * 0.5);
+                # Get the aspect ratio of the cube, to figure out if it is actually one cube
+                ratio   = bnd_w / bnd_h;
                 
                 # Draw the (simplified) outline of our contour in black
                 cv2.drawContours(cv_image, contours=c, contourIdx=-1, color=(255, 0, 0), thickness=5);
@@ -128,9 +130,14 @@ class IdentifyCubes(Node):
                     color= (0,255,0) if isCube else (255,255,0),
                     thickness=2
                 );
+
+                if (isCube):
+                    # Print data into the image at the origin of the bounding box
+                    cv2.putText(cv_image, f"a: {area:.0f}, r: {ratio:.3f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
+                else:
+                    cv2.putText(cv_image, "Green Area Marker", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 0, 0), thickness=2);
+                    
                 
-                # Print data into the image at the origin of the bounding box
-                cv2.putText(cv_image, f"{area}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 0, 0), thickness=2);
 
         # Reduce the image size we render using imshow
         # Overwrite existing variable for memory usage
