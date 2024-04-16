@@ -9,10 +9,12 @@
 import rclpy
 from rclpy.node import Node
 
-from sensor_msgs.msg import Image
+import sensor_msgs.msg
 from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS and OpenCV Images
-import cv2
+
+import message_filters as mf
 import numpy as np
+import cv2
 
 
 
@@ -21,8 +23,7 @@ class IdentifyCubes(Node):
     def __init__(self):
         # Init our ros2 node with a name
         super().__init__("identify_cubes");
-        # Subscribe to the depth camera
-        self.create_subscription(Image, '/limo/depth_camera_link/image_raw', self.camera_callback, 1);
+
         # Initialise the OpenCV-ROS2 bridge
         self.br = CvBridge();
         # Setup a window to display stuff in
@@ -51,13 +52,90 @@ class IdentifyCubes(Node):
         self.LOWER_GREEN      = np.array((54,  self.LOWER_SATURATION, self.LOWER_LIGHTNESS));
         # 150° looks like teal
         self.UPPER_GREEN      = np.array((107, self.UPPER_SATURATION, self.UPPER_LIGHTNESS));
+    
+        # TSS code sample expanded from this doc: https://github.com/ros2/message_filters/blob/541d8a5009b14aaae4d9fe52e101273e428bb5d0/index.rst
+        # Subscribe to the depth camera and the colour camera
+        tss = mf.TimeSynchronizer([
+            # The colour sensor output
+            mf.Subscriber(self, sensor_msgs.msg.Image, "/limo/depth_camera_link/image_raw"),
+            # The depth sensor output
+            mf.Subscriber(self, sensor_msgs.msg.Image, "/limo/depth_camera_link/depth/image_raw")
+        ], queue_size=2);
+
+        # Register our callback
+        tss.registerCallback(self.camera_callback);
 
 
-    def camera_callback(self, data):
+    def process_mask(self, mask: cv2.typing.MatLike, cv_image: cv2.typing.MatLike, isGreen: bool, depth_img: cv2.typing.MatLike):
+        """
+        Process the provided mask and overlay data to cv_image, which python hopefully passes by reference
+        """
+        
+        # Find contours in our mask
+        contours, hierachy = cv2.findContours(
+            # Since OpenCV 3.2 findContours doesn't modify the source image so we don't need .copy()
+            mask,
+            # Return a list hierarchy instead of a tree, since we're not interested in the hierarchy
+            cv2.RETR_LIST,
+            # Simplify the contour to not return redundant information
+            cv2.CHAIN_APPROX_SIMPLE);
+        
+        # Iterate over the contours we found in the segmented image
+        for c in contours:
+            # This allows to compute the area (in pixels) of a contour
+            area = cv2.contourArea(c);
+            
+            # Only operate on contours of a specified area
+            if area > 100.0:
+
+                # The bounding box and moments initialisation is taken from the OpenCV Python documentation
+                # https://docs.opencv.org/3.4/dd/d49/tutorial_py_contour_features.html
+
+                # Get the bounding box of this contour
+                bnd_x, bnd_y, bnd_w, bnd_h = cv2.boundingRect(c);
+                # Check if the centre of that rectangle is above or below the centre of the image
+                isCube  = (bnd_y + (bnd_h * 0.5)) > (cv_image.shape[0] * 0.5);
+                # Get the aspect ratio of the cube, to figure out if it is actually one cube
+                ratio   = bnd_w / bnd_h;
+                
+                # Draw the (simplified) outline of our contour in black
+                cv2.drawContours(cv_image, contours=c, contourIdx=-1, color=(255, 0, 255), thickness=5);
+
+                # Draw a bounding box for our contour
+                cv2.rectangle(
+                    cv_image,
+                    pt1=(bnd_x, bnd_y),
+                    pt2=(bnd_x + bnd_w, bnd_y + bnd_h),
+                    color= (0,0,0) if (not isCube) else ((0,255,0) if isGreen else (0,0,255)),
+                    thickness=2
+                );
+
+                if (isCube):
+                    # Print data into the image at the origin of the bounding box
+                    cv2.putText(cv_image, f"a: {area:.0f}, r: {ratio:.3f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
+                else:
+                    # If it's the area marker, mark it on the overlay
+                    if (isGreen):
+                        cv2.putText(cv_image, "Green Area Marker", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 255, 0), thickness=2);
+                    else:
+                        cv2.putText(cv_image, "Red Area Marker", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 0, 255), thickness=2);
+
+
+
+    def camera_callback(self, cam_data, depth_data):
+        """
+        The function to act on camera data.
+
+        Requires both depth and colour information simultaneously
+        """
+        
         try:
             # Get the ros2 topic data and use the CvBridge instance
             # to cast it into an OpenCV image
-            cv_image = self.br.imgmsg_to_cv2(data, "bgr8");
+            cv_image = self.br.imgmsg_to_cv2(cam_data, "bgr8");
+            # We also want to fetch our depth image, which uses 1-channel
+            # 32-bit floating point pixels (which is distance)
+            depth_image = self.br.imgmsg_to_cv2(depth_data, "32FC1");
 
         # Ignore errors by printing them and stopping the execution 
         # only of this callback
@@ -92,58 +170,16 @@ class IdentifyCubes(Node):
             cv2.inRange(cv_image_hsv, lowerb=self.LOWER_RED_UPPER, upperb=self.UPPER_RED_UPPER)
         );
 
-        # Find contours in our mask
-        contours, hierachy = cv2.findContours(
-            # Since OpenCV 3.2 findContours doesn't modify the source image so we don't need .copy()
-            green_thresh,
-            # Return a list hierarchy instead of a tree, since we're not interested in the hierarchy
-            cv2.RETR_LIST,
-            # Simplify the contour to not return redundant information
-            cv2.CHAIN_APPROX_SIMPLE);
-        
-        # Iterate over the contours we found in the segmented image
-        for c in contours:
-            # This allows to compute the area (in pixels) of a contour
-            area = cv2.contourArea(c);
-            
-            # Only operate on contours of a specified area
-            if area > 100.0:
-
-                # The bounding box and moments initialisation is taken from the OpenCV Python documentation
-                # https://docs.opencv.org/3.4/dd/d49/tutorial_py_contour_features.html
-
-                # Get the bounding box of this contour
-                bnd_x, bnd_y, bnd_w, bnd_h = cv2.boundingRect(c);
-                # Check if the centre of that rectangle is above or below the centre of the image
-                isCube  = (bnd_y + (bnd_h * 0.5)) > (cv_image.shape[0] * 0.5);
-                # Get the aspect ratio of the cube, to figure out if it is actually one cube
-                ratio   = bnd_w / bnd_h;
-                
-                # Draw the (simplified) outline of our contour in black
-                cv2.drawContours(cv_image, contours=c, contourIdx=-1, color=(255, 0, 255), thickness=5);
-
-                # Draw a bounding box for our contour
-                cv2.rectangle(
-                    cv_image,
-                    pt1=(bnd_x, bnd_y),
-                    pt2=(bnd_x + bnd_w, bnd_y + bnd_h),
-                    color= (0,255,0) if isCube else (0,0,0),
-                    thickness=2
-                );
-
-                if (isCube):
-                    # Print data into the image at the origin of the bounding box
-                    cv2.putText(cv_image, f"a: {area:.0f}, r: {ratio:.3f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
-                else:
-                    cv2.putText(cv_image, "Green Area Marker", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 255, 0), thickness=2);
-                    
-                
+        # Process both the red and green thresholds
+        self.process_mask(green_thresh, cv_image, isGreen=True, depth_img=depth_image);
+        self.process_mask(red_thresh, cv_image, isGreen=False, depth_img=depth_image);
 
         # Reduce the image size we render using imshow
         # Overwrite existing variable for memory usage
         cv_image = cv2.resize(cv_image, (0,0), fx=0.75, fy=0.75);
         cv2.imshow("Cube View", cv_image);
         
+        # Occupy (block) the window between callbacks so it stays up
         cv2.waitKey(1);
 
 def main(args=None):
