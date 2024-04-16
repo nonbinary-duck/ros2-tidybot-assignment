@@ -28,6 +28,8 @@ class IdentifyCubes(Node):
         # Setup a window to display stuff in
         cv2.namedWindow("Cube View", 1);
         # Setup some "constants"
+        # Value to add to colour for bounding box of banner
+        self.BANNER_MODIFIER  = (0,0,128);
         self.LOWER_LIGHTNESS  = 20;
         self.UPPER_LIGHTNESS  = 255;
         self.LOWER_SATURATION = 150;
@@ -63,7 +65,6 @@ class IdentifyCubes(Node):
             print(e);
             return;
 
-
         # It often is better to use another colour space, that is
         # less sensitive to illumination (brightness) changes.
         # The HSV colour space is often a good choice. 
@@ -95,8 +96,8 @@ class IdentifyCubes(Node):
         contours, hierachy = cv2.findContours(
             # Since OpenCV 3.2 findContours doesn't modify the source image so we don't need .copy()
             green_thresh,
-            # Return a tree hierarchy instead of a list, so that obviously related contours can form a tree
-            cv2.RETR_TREE,
+            # Return a list hierarchy instead of a tree, since we're not interested in the hierarchy
+            cv2.RETR_LIST,
             # Simplify the contour to not return redundant information
             cv2.CHAIN_APPROX_SIMPLE);
         
@@ -107,14 +108,34 @@ class IdentifyCubes(Node):
             
             # Only operate on contours of a specified area
             if area > 100.0:
-                # Draw the (simplified) outline of our contour
-                cv2.drawContours(cv_image, c, -1, (255, 0, 255), 10);
-                # Print data into the image at the first vertex in the contour
-                cv2.putText(cv_image, f"{area}", org=c[0][0], fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 0, 0), thickness=2);
+
+                # The bounding box and moments code is taken from the OpenCV Python documentation
+                # https://docs.opencv.org/3.4/dd/d49/tutorial_py_contour_features.html
+
+                # Get the bounding box of this contour
+                bnd_x, bnd_y, bnd_w, bnd_h = cv2.boundingRect(c);
+                # Check if the centre of that rectangle is above or below the centre of the image
+                isCube  = (bnd_y + (bnd_h * 0.5)) > (cv_image.shape[0] * 0.5);
+                
+                # Draw the (simplified) outline of our contour in black
+                cv2.drawContours(cv_image, contours=c, contourIdx=-1, color=(255, 0, 0), thickness=5);
+
+                # Draw a bounding box for our contour
+                cv2.rectangle(
+                    cv_image,
+                    pt1=(bnd_x, bnd_y),
+                    pt2=(bnd_x + bnd_w, bnd_y + bnd_h),
+                    color= (0,255,0) if isCube else (255,255,0),
+                    thickness=2
+                );
+                
+                # Print data into the image at the origin of the bounding box
+                cv2.putText(cv_image, f"{area}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 0, 0), thickness=2);
 
         # Reduce the image size we render using imshow
-        cv_image_small = cv2.resize(cv_image, (0,0), fx=0.75, fy=0.75);
-        cv2.imshow("Cube View", cv_image_small);
+        # Overwrite existing variable for memory usage
+        cv_image = cv2.resize(cv_image, (0,0), fx=0.75, fy=0.75);
+        cv2.imshow("Cube View", cv_image);
         
         cv2.waitKey(1);
 
