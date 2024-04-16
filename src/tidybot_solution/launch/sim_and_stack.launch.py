@@ -5,9 +5,9 @@ from ament_index_python.packages import get_package_share_directory
 from launch_ros.substitutions import FindPackageShare
 
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription, ExecuteProcess
+from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import PathJoinSubstitution, TextSubstitution
+from launch.substitutions import PathJoinSubstitution
 from launch_ros.actions import Node
 
 #
@@ -19,7 +19,10 @@ def generate_launch_description():
     # Line of code adapted from the nav2_bringup slam_launch.py file
     tidybot_dir = get_package_share_directory('tidybot_solution');
     
-    return LaunchDescription([
+    # Initialise a launch description object to add to
+    ld = LaunchDescription();
+
+    ld.add_action(
         # Include the tidybot launch description
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([
@@ -33,7 +36,10 @@ def generate_launch_description():
                 "use_rviz": "false",
                 "params_file": os.path.join( tidybot_dir, "params", "limo_params.yaml" )
             }.items()
-        ),
+        )
+    );
+
+    ld.add_action(
         # Include our Nav2 SLAM Toolbox launch description
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([
@@ -47,35 +53,21 @@ def generate_launch_description():
                 "slam_params_file": os.path.join( tidybot_dir, "params", "limo_mapper_params_online_sync.yaml" ),
                 "params_file": os.path.join( tidybot_dir, "params", "limo_nav2_params.yaml" )
             }.items()
-        ),
-        # Spawn some green cubes
-        Node(
-            package="uol_tidybot",
-            executable="generate_objects",
-        ),
-        # Spawn some red cubes
-        #ros2 run  uol_tidybot generate_objects --ros-args -p red:=true -p n_objects:=10
-        Node(
-            package="uol_tidybot",
-            executable="generate_objects",
-            ros_arguments=[
-                "red:=true",
-                "m_objects:=10"
-            ]
-        ),
-        # Launch our nodes
-        Node(
-            package="tidybot_solution",
-            executable="identify_cubes"
-        ),
-        # Adjust the rate of the camera as specifying it through params file doesn't work
-        ExecuteProcess(
-            cmd=[[
-                "ros2 param set ",
-                "/limo/gazebo_ros_depth_camera_sensor ",
-                "update_rate ",
-                "20.0"
-            ]],
-            shell=True
         )
-    ]);
+    );
+
+    # Also launch rviz with our config
+    ld.add_action(
+        Node(
+            package="rviz2",
+            executable="rviz2",
+            parameters=[
+                "-d ",
+                os.path.join( tidybot_dir, "rviz", "tidybot.rviz" )
+            ]
+        )
+    );
+
+    # Return our launch description we've generated
+    return ld;
+

@@ -16,7 +16,8 @@ setup(
         # Include all launch files.
         (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
         # Also include our custom params files
-        (os.path.join('share', package_name, 'params'), glob(os.path.join('params', '*')))
+        (os.path.join('share', package_name, 'params'), glob(os.path.join('params', '*'))),
+        (os.path.join('share', package_name, 'rviz'), glob(os.path.join('rviz', '*.rviz')))
     ],
     install_requires=['setuptools'],
     zip_safe=True,
