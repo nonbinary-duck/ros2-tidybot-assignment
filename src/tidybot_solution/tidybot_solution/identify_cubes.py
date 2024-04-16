@@ -120,14 +120,14 @@ class IdentifyCubes(Node):
                 ratio   = bnd_w / bnd_h;
                 
                 # Draw the (simplified) outline of our contour in black
-                cv2.drawContours(cv_image, contours=c, contourIdx=-1, color=(255, 0, 0), thickness=5);
+                cv2.drawContours(cv_image, contours=c, contourIdx=-1, color=(255, 0, 255), thickness=5);
 
                 # Draw a bounding box for our contour
                 cv2.rectangle(
                     cv_image,
                     pt1=(bnd_x, bnd_y),
                     pt2=(bnd_x + bnd_w, bnd_y + bnd_h),
-                    color= (0,255,0) if isCube else (255,255,0),
+                    color= (0,255,0) if isCube else (0,0,0),
                     thickness=2
                 );
 
@@ -135,7 +135,7 @@ class IdentifyCubes(Node):
                     # Print data into the image at the origin of the bounding box
                     cv2.putText(cv_image, f"a: {area:.0f}, r: {ratio:.3f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
                 else:
-                    cv2.putText(cv_image, "Green Area Marker", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 0, 0), thickness=2);
+                    cv2.putText(cv_image, "Green Area Marker", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 255, 0), thickness=2);
                     
                 
 
