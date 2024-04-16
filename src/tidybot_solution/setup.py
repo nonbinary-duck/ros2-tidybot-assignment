@@ -1,3 +1,5 @@
+import os
+from glob import glob
 from setuptools import find_packages, setup
 
 package_name = 'tidybot_solution'
@@ -10,6 +12,11 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        # From https://docs.ros.org/en/humble/Tutorials/Intermediate/Launch/Using-Substitutions.html
+        # Include all launch files.
+        (os.path.join('share', package_name, 'launch'), glob(os.path.join('launch', '*launch.[pxy][yma]*'))),
+        # Also include our custom params files
+        (os.path.join('share', package_name, 'params'), glob(os.path.join('params', '*')))
     ],
     install_requires=['setuptools'],
     zip_safe=True,

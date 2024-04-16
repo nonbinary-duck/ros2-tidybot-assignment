@@ -1,3 +1,7 @@
+import os
+
+from ament_index_python.packages import get_package_share_directory
+
 from launch_ros.substitutions import FindPackageShare
 
 from launch import LaunchDescription
@@ -6,8 +10,16 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import PathJoinSubstitution, TextSubstitution
 from launch_ros.actions import Node
 
+#
+# Launch file based on the substitutions tutorial: https://docs.ros.org/en/humble/Tutorials/Intermediate/Launch/Using-Substitutions.html
+#
+
 def generate_launch_description():
-    ld = LaunchDescription([
+
+    # Line of code adapted from the nav2_bringup slam_launch.py file
+    tidybot_dir = get_package_share_directory('tidybot_solution');
+    
+    return LaunchDescription([
         # Include the tidybot launch description
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([
@@ -18,9 +30,9 @@ def generate_launch_description():
                 ])
             ]),
             launch_arguments={
-                "use_rviz": "true",
-                "params_file": "limo_params.yaml"
-            }
+                "use_rviz": "false",
+                "params_file": os.path.join( tidybot_dir, "params", "limo_params.yaml" )
+            }.items()
         ),
         # Include our Nav2 SLAM Toolbox launch description
         IncludeLaunchDescription(
@@ -32,24 +44,24 @@ def generate_launch_description():
                 ])
             ]),
             launch_arguments={
-                "slam_params_file": "limo_mapper_params_online_sync.yaml",
-                "params_file": "limo_nav2_params.yaml"
-            }
+                "slam_params_file": os.path.join( tidybot_dir, "params", "limo_mapper_params_online_sync.yaml" ),
+                "params_file": os.path.join( tidybot_dir, "params", "limo_nav2_params.yaml" )
+            }.items()
         ),
         # Spawn some green cubes
-        #ros2 run  uol_tidybot generate_objects --ros-args -p red:=true -p n_objects:=10
-        Node(
-            package="uol_tidybot",
-            executable="generate_objects"
-        ),
-        # Spawn some red cubes
         Node(
             package="uol_tidybot",
             executable="generate_objects",
-            ros_arguments={
-                "red": True,
-                "n_objects": 10
-            }
+        ),
+        # Spawn some red cubes
+        #ros2 run  uol_tidybot generate_objects --ros-args -p red:=true -p n_objects:=10
+        Node(
+            package="uol_tidybot",
+            executable="generate_objects",
+            ros_arguments=[
+                "red:=true",
+                "m_objects:=10"
+            ]
         ),
         # Launch our nodes
         Node(
@@ -67,5 +79,3 @@ def generate_launch_description():
             shell=True
         )
     ]);
-
-    return ld;
