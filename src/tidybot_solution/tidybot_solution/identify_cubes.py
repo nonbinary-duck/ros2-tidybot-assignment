@@ -9,6 +9,7 @@
 import rclpy
 from rclpy.node import Node
 
+from tf_transformations import euler_from_quaternion
 import tf2_ros
 import sensor_msgs.msg
 from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS and OpenCV Images
@@ -66,9 +67,9 @@ class IdentifyCubes(Node):
         # 150° looks like teal
         self.UPPER_GREEN      = np.array((107, self.UPPER_SATURATION, self.UPPER_LIGHTNESS));
         # The camera's FoV in tau radians
-        # It's 110° and 1 tau radians is a full circle so it's an easy conversion that way
+        # It's 80° and 1 tau radians is a full circle so it's an easy conversion that way
         # tau = 2pi
-        self.CAMERA_FOV       = 110.0/360.0;
+        self.CAMERA_FOV       = 80.0/360.0;
     
         # TSS code sample expanded from this doc: https://github.com/ros2/message_filters/blob/541d8a5009b14aaae4d9fe52e101273e428bb5d0/index.rst
         # Subscribe to the depth camera and the colour camera
@@ -134,15 +135,21 @@ class IdentifyCubes(Node):
                 # This could be improved by correcting for distortion, but approximations are ok for our application
                 heading            = ((bnd_centroid[0] / cv_image.shape[1]) * self.CAMERA_FOV) - (self.CAMERA_FOV * 0.5);
 
+                # Get the yaw of the robot
+                robo_yaw           = euler_from_quaternion((self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w))[2];
+
+                new_x              =dist*(np.cos((heading * np.pi * 2))+robo_yaw )
+                new_y              =dist*(np.sin((heading * np.pi * 2))+robo_yaw )
+                print([new_x,new_y, euler_from_quaternion((self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w)), heading * np.pi * 2, heading])
                 # If we've got a heading and a distance we can use basic trigonometry to find the
                 # offset in x and y coordinates to that cube centroid
                 # We also need to convert our heading (which is in tau radians) to radians
-                offset             = ( dist * np.sin(heading * 2 * np.pi), dist * np.cos(heading * 2 * np.pi) );
+                offset             = ( dist * np.cos((heading * 2 * np.pi) + robo_yaw), dist * np.sin((heading * 2 * np.pi) + robo_yaw) );
         
                 # Get an absolute pose of the cube according to our world SLAM map
-                cube_pose          = np.add(offset, (self.cam2world.transform.translation.y, self.cam2world.transform.translation.x));
+                cube_pose          = (offset[0] - self.cam2world.transform.translation.x, offset[1] + self.cam2world.transform.translation.y);
 
-                # print(f"x {self.cam2world.transform.translation.x}, y {self.cam2world.transform.translation.y}")
+                # print(f"pose {cube_pose}, offset {offset}, tf {self.cam2world.transform.translation}");
 
                 
                 # Draw the (simplified) outline of our contour in black
@@ -168,7 +175,8 @@ class IdentifyCubes(Node):
 
                 if (isCube):
                     # Print data into the image at the origin of the bounding box
-                    cv2.putText(cv_image, f"h: {heading*360:.2f}, d: {dist:.2f}, x: {cube_pose[0]:.2f}, y: {cube_pose[1]:.2f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
+                    cv2.putText(cv_image, f"h: {heading*360:.2f}, x: {cube_pose[0]:.2f}, y: {cube_pose[1]:.2f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
+                    # cv2.putText(cv_image, f"h: {heading*360:.2f}, d: {dist:.2f}, x: {cube_pose[0]:.2f}, y: {cube_pose[1]:.2f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
                 else:
                     # If it's the area marker, mark it on the overlay
                     if (isGreen):
