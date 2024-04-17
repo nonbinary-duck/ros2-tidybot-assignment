@@ -247,6 +247,8 @@ class IdentifyCubes(Node):
         greenCubes = self.process_mask(green_thresh, cv_image, isGreen=True, depth_img=depth_image);
         redCubes   = self.process_mask(red_thresh, cv_image, isGreen=False, depth_img=depth_image);
 
+        
+
         # Combine the lists of cubes and iterate over them
         for cube in (greenCubes + redCubes):
             print(cube);
