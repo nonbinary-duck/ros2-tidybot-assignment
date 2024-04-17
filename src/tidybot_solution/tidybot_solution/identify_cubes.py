@@ -9,9 +9,10 @@
 import rclpy
 from rclpy.node import Node
 
-from tf_transformations import euler_from_quaternion
+import tf_transformations as tft # Alias to tft because that's a big name
 import tf2_ros
 import sensor_msgs.msg
+import geometry_msgs.msg
 from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS and OpenCV Images
 
 import message_filters as mf
@@ -37,6 +38,8 @@ class IdentifyCubes(Node):
         self.tf_buffer   = tf2_ros.buffer.Buffer(cache_time=tf2_ros.Duration(seconds=5));
         # We setup a listener to fetch TF frames
         self.tf_listener = tf2_ros.transform_listener.TransformListener(self.tf_buffer, node=self);
+        # And we also want something to publish TFs
+        self.tf_broadcst = tf2_ros.transform_broadcaster.TransformBroadcaster(self, 5);
         
         
         # Setup some "constants"
@@ -136,15 +139,31 @@ class IdentifyCubes(Node):
                 heading            = ((bnd_centroid[0] / cv_image.shape[1]) * self.CAMERA_FOV) - (self.CAMERA_FOV * 0.5);
 
                 # Get the yaw of the robot
-                robo_yaw           = euler_from_quaternion((self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w))[2];
+                robo_yaw           = tft.euler_from_quaternion((self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w))[2];
 
-                new_x              =dist*(np.cos((heading * np.pi * 2))+robo_yaw )
-                new_y              =dist*(np.sin((heading * np.pi * 2))+robo_yaw )
-                print([new_x,new_y, euler_from_quaternion((self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w)), heading * np.pi * 2, heading])
+                new_x              =dist*(np.cos((heading * np.pi * 2))+robo_yaw );
+                new_y              =dist*(np.sin((heading * np.pi * 2))+robo_yaw );
+                print([new_x,new_y, tft.euler_from_quaternion((self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w)), heading * np.pi * 2, heading]);
+                
+                
                 # If we've got a heading and a distance we can use basic trigonometry to find the
                 # offset in x and y coordinates to that cube centroid
                 # We also need to convert our heading (which is in tau radians) to radians
                 offset             = ( dist * np.cos((heading * 2 * np.pi) + robo_yaw), dist * np.sin((heading * 2 * np.pi) + robo_yaw) );
+
+
+                # Send a transform for this cube
+                # Adapted from this tutorial: https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Quaternion-Fundamentals.html
+                transform                         = tf2_ros.TransformStamped();
+                transform.header.stamp            = self.get_clock().now().to_msg();
+                transform.header.frame_id         = self.TF_FRAME_CAM;
+                transform.child_frame_id          = f"cube";
+                transform.transform.translation.x = dist * np.cos(robo_yaw);
+                transform.transform.translation.y = dist * np.sin(robo_yaw);
+                transform.transform.translation.z = 0.0;
+                transform.transform.rotation      = geometry_msgs.msg.Quaternion(x=0.0, y=0.0, z=0.0, w=1.0);
+                
+                self.tf_broadcst.sendTransform(transform);
         
                 # Get an absolute pose of the cube according to our world SLAM map
                 cube_pose          = (offset[0] - self.cam2world.transform.translation.x, offset[1] + self.cam2world.transform.translation.y);
