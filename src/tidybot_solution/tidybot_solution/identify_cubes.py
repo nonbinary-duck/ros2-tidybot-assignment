@@ -9,13 +9,9 @@
 import rclpy
 from rclpy.node import Node
 
-import sensor_msgs_py.point_cloud2
-import tf_transformations as tft # Alias to tft because that's a big name
-import tf2_geometry_msgs
+from tidybot_interfaces.msg import CubeContext
 import tf2_ros
-import laser_geometry
 import sensor_msgs.msg
-import geometry_msgs.msg
 from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS and OpenCV Images
 
 import message_filters as mf
@@ -39,9 +35,7 @@ class IdentifyCubes(Node):
         self.tf_buffer   = tf2_ros.buffer.Buffer(cache_time=tf2_ros.Duration(seconds=5));
         # We setup a listener to fetch TF frames
         self.tf_listener = tf2_ros.transform_listener.TransformListener(self.tf_buffer, node=self);
-        # And we also want something to publish TFs
-        self.tf_broadcst = tf2_ros.transform_broadcaster.TransformBroadcaster(self, 5);
-        
+        self.cube_pub    = self.create_publisher(CubeContext, "/cube_info", 10);
         
         # Setup some "constants"
         # Relevant TF frames
@@ -184,7 +178,7 @@ class IdentifyCubes(Node):
 
 
 
-    def camera_callback(self, cam_data, depth_data):
+    def camera_callback(self, cam_data: sensor_msgs.msg.Image, depth_data: sensor_msgs.msg.Image):
         """
         The function to act on camera data.
 
@@ -247,11 +241,25 @@ class IdentifyCubes(Node):
         greenCubes = self.process_mask(green_thresh, cv_image, isGreen=True, depth_img=depth_image);
         redCubes   = self.process_mask(red_thresh, cv_image, isGreen=False, depth_img=depth_image);
 
-        
+        # Initialise a cube message to send
+        cube_state = CubeContext();
+        # Take the header from the depth sensor as that is what's relevant to us
+        cube_state.header = depth_data.header;
+        # Initialise lists
+        cube_state.is_green = [];
+        cube_state.area     = [];
+        cube_state.heading  = [];
+        cube_state.range    = [];
 
-        # Combine the lists of cubes and iterate over them
+        # Combine the lists of cubes and iterate over them to add into the cube_state
         for cube in (greenCubes + redCubes):
-            print(cube);
+            # Append this cube to the state
+            cube_state.is_green.append(cube["isGreen"]);
+            cube_state.area.append(int(cube["area"]));
+            cube_state.heading.append(cube["heading"]);
+            cube_state.range.append(cube["dist"]);
+
+        self.cube_pub.publish(cube_state);
 
         # Reduce the image size we render using imshow
         # Overwrite existing variable for memory usage

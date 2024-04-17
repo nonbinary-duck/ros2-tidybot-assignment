@@ -17,10 +17,12 @@
   <depend>tf_transformations</depend>
   <depend>tf2_geometry_msgs</depend>
   <depend>tf2_ros</depend>
+  <depend>std_msgs</depend>
   <depend>message_filters</depend>
   <exec_depend>ros2launch</exec_depend>
   <exec_depend>uol_tidybot</exec_depend>
-  
+  <exec_depend>tidybot_interfaces</exec_depend>
+
   <export>
     <build_type>ament_python</build_type>
   </export>
