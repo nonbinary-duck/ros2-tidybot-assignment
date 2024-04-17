@@ -21,7 +21,6 @@ from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS a
 import message_filters as mf
 import numpy as np
 import cv2
-import array
 
 
 class IdentifyCubes(Node):
@@ -94,6 +93,9 @@ class IdentifyCubes(Node):
         Process the provided mask and overlay data to cv_image, which python hopefully passes by reference
         """
 
+        # Initialise a list to write cube data to
+        cubes = [];
+
         # In case the depth camera is a different resolution to the colour sensor
         # get a ratio between the two so we can scale pixel values
         depth_ratio = np.divide(depth_img.shape, cv_image.shape[0:2]);
@@ -137,44 +139,6 @@ class IdentifyCubes(Node):
                 # Normalise around the centre of the screen
                 # This could be improved by correcting for distortion, but approximations are ok for our application
                 heading            = ((bnd_centroid[0] / cv_image.shape[1]) * self.CAMERA_FOV) - (self.CAMERA_FOV * 0.5);
-
-                # Get the yaw of the robot
-                robo_yaw           = tft.euler_from_quaternion((self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w))[2];
-
-                lsr                = sensor_msgs.msg.LaserScan();
-                lsr.header.frame_id= self.TF_FRAME_CAM;
-                lsr.header.stamp   = self.cam2world.header.stamp;
-                lsr.angle_min      = robo_yaw + (heading * 2 * np.pi); 
-                lsr.angle_max      = robo_yaw + (heading * 2 * np.pi);
-                lsr.angle_increment= 0.0;
-                print(dist);
-                lsr.ranges         = array.array("f", [dist]);
-                
-                laser_projector    = laser_geometry.LaserProjection();
-                cube               = laser_projector.projectLaser(scan_in=lsr);
-
-                for point in sensor_msgs_py.point_cloud2.read_points(cube, field_names=["x", "y"]):
-                    cube_tf = tf2_ros.TransformStamped();
-                    cube_tf.transform.rotation.x = 0.0;
-                    cube_tf.transform.rotation.y = 0.0;
-                    cube_tf.transform.rotation.z = 0.0;
-                    cube_tf.transform.rotation.w = 1.0;
-                    cube_tf.transform.translation.x = point["x"];
-                    cube_tf.transform.translation.x = point["y"];
-                    
-                    cube_tf_transformed = self.tf_buffer.transform(cube_tf, self.TF_FRAME_WORLD);
-                    print(cube_tf_transformed.transform.translation);
-                
-                # If we've got a heading and a distance we can use basic trigonometry to find the
-                # offset in x and y coordinates to that cube centroid
-                # We also need to convert our heading (which is in tau radians) to radians
-                offset             = ( dist * np.cos((heading * 2 * np.pi) + robo_yaw), dist * np.sin((heading * 2 * np.pi) + robo_yaw) );
-        
-                # Get an absolute pose of the cube according to our world SLAM map
-                cube_pose          = (offset[0] - self.cam2world.transform.translation.x, offset[1] + self.cam2world.transform.translation.y);
-
-                # print(f"pose {cube_pose}, offset {offset}, tf {self.cam2world.transform.translation}");
-
                 
                 # Draw the (simplified) outline of our contour in black
                 cv2.drawContours(cv_image, contours=c, contourIdx=-1, color=(255, 0, 255), thickness=5);
@@ -200,13 +164,23 @@ class IdentifyCubes(Node):
                 if (isCube):
                     # Print data into the image at the origin of the bounding box
                     cv2.putText(cv_image, f"d: {dist:.2f}, h: {heading*360:.2f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
-                    # cv2.putText(cv_image, f"h: {heading*360:.2f}, d: {dist:.2f}, x: {cube_pose[0]:.2f}, y: {cube_pose[1]:.2f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
+                    
+                    # Store data about our cube
+                    cubes.append({
+                        "isGreen": isGreen,
+                        "area"   : area,
+                        "heading": heading,
+                        "dist"   : dist
+                    });
                 else:
                     # If it's the area marker, mark it on the overlay
                     if (isGreen):
                         cv2.putText(cv_image, "Green Area Marker", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 255, 0), thickness=2);
                     else:
                         cv2.putText(cv_image, "Red Area Marker", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=2.0, color= (0, 0, 255), thickness=2);
+        
+        # Return our list of cubes we found
+        return cubes;
 
 
 
@@ -269,8 +243,13 @@ class IdentifyCubes(Node):
         );
 
         # Process both the red and green thresholds
-        self.process_mask(green_thresh, cv_image, isGreen=True, depth_img=depth_image);
-        self.process_mask(red_thresh, cv_image, isGreen=False, depth_img=depth_image);
+        # Get back the list of cubes
+        greenCubes = self.process_mask(green_thresh, cv_image, isGreen=True, depth_img=depth_image);
+        redCubes   = self.process_mask(red_thresh, cv_image, isGreen=False, depth_img=depth_image);
+
+        # Combine the lists of cubes and iterate over them
+        for cube in (greenCubes + redCubes):
+            print(cube);
 
         # Reduce the image size we render using imshow
         # Overwrite existing variable for memory usage
