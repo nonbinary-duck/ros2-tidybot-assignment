@@ -9,9 +9,11 @@
 import rclpy
 from rclpy.node import Node
 
+import sensor_msgs_py.point_cloud2
 import tf_transformations as tft # Alias to tft because that's a big name
 import tf2_geometry_msgs
 import tf2_ros
+import laser_geometry
 import sensor_msgs.msg
 import geometry_msgs.msg
 from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS and OpenCV Images
@@ -19,8 +21,7 @@ from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS a
 import message_filters as mf
 import numpy as np
 import cv2
-
-
+import array
 
 
 class IdentifyCubes(Node):
@@ -140,24 +141,29 @@ class IdentifyCubes(Node):
                 # Get the yaw of the robot
                 robo_yaw           = tft.euler_from_quaternion((self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w))[2];
 
-                new_x              = (dist*(np.cos(heading * 2 * np.pi) )) + self.cam2world.transform.translation.x;
-                new_y              = (dist*(np.sin(heading * 2 * np.pi) )) + self.cam2world.transform.translation.y;
-                # print([new_x,new_y, tft.euler_from_quaternion((self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w)), heading * np.pi * 2, heading]);
-
-                pose = tf2_ros.PoseStamped();
-                pose.header.stamp = self.cam2world.header.stamp;
-                pose.header.frame_id = self.TF_FRAME_CAM;
-                pose.pose.orientation.x = 0.0;
-                pose.pose.orientation.y = 0.0;
-                pose.pose.orientation.z = 0.0;
-                pose.pose.orientation.w = 1.0;
-
-                pose.pose.position.x    = dist*(np.sin((heading * 2 * np.pi) + robo_yaw));
-                pose.pose.position.y    = dist*(np.cos((heading * 2 * np.pi) + robo_yaw));
-                pose.pose.position.z    = 0.0;
-
-                print(self.tf_buffer.transform(pose, self.TF_FRAME_WORLD));
+                lsr                = sensor_msgs.msg.LaserScan();
+                lsr.header.frame_id= self.TF_FRAME_CAM;
+                lsr.header.stamp   = self.cam2world.header.stamp;
+                lsr.angle_min      = robo_yaw + (heading * 2 * np.pi); 
+                lsr.angle_max      = robo_yaw + (heading * 2 * np.pi);
+                lsr.angle_increment= 0.0;
+                print(dist);
+                lsr.ranges         = array.array("f", [dist]);
                 
+                laser_projector    = laser_geometry.LaserProjection();
+                cube               = laser_projector.projectLaser(scan_in=lsr);
+
+                for point in sensor_msgs_py.point_cloud2.read_points(cube, field_names=["x", "y"]):
+                    cube_tf = tf2_ros.TransformStamped();
+                    cube_tf.transform.rotation.x = 0.0;
+                    cube_tf.transform.rotation.y = 0.0;
+                    cube_tf.transform.rotation.z = 0.0;
+                    cube_tf.transform.rotation.w = 1.0;
+                    cube_tf.transform.translation.x = point["x"];
+                    cube_tf.transform.translation.x = point["y"];
+                    
+                    cube_tf_transformed = self.tf_buffer.transform(cube_tf, self.TF_FRAME_WORLD);
+                    print(cube_tf_transformed.transform.translation);
                 
                 # If we've got a heading and a distance we can use basic trigonometry to find the
                 # offset in x and y coordinates to that cube centroid
