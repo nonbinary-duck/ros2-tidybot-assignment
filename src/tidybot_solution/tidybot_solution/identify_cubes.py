@@ -9,6 +9,7 @@
 import rclpy
 from rclpy.node import Node
 
+import tf2_ros
 import sensor_msgs.msg
 from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS and OpenCV Images
 
@@ -28,7 +29,19 @@ class IdentifyCubes(Node):
         self.br = CvBridge();
         # Setup a window to display stuff in
         cv2.namedWindow("Cube View", 1);
+
+        # TF init code adapted from docs https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Writing-A-Tf2-Listener-Py.html
+        # Setup our TF listener
+        # We initialise a buffer to store TF frames in, and cache 5 seconds worth
+        self.tf_buffer   = tf2_ros.buffer.Buffer(cache_time=tf2_ros.Duration(seconds=5));
+        # We setup a listener to fetch TF frames
+        self.tf_listener = tf2_ros.transform_listener.TransformListener(self.tf_buffer, node=self);
+        
+        
         # Setup some "constants"
+        # Relevant TF frames
+        self.TF_FRAME_WORLD   = "map"
+        self.TF_FRAME_CAM     = "depth_camera_link"
         # Value to add to colour for bounding box of banner
         self.BANNER_MODIFIER  = (0,0,128);
         self.LOWER_LIGHTNESS  = 20;
@@ -52,6 +65,10 @@ class IdentifyCubes(Node):
         self.LOWER_GREEN      = np.array((54,  self.LOWER_SATURATION, self.LOWER_LIGHTNESS));
         # 150° looks like teal
         self.UPPER_GREEN      = np.array((107, self.UPPER_SATURATION, self.UPPER_LIGHTNESS));
+        # The camera's FoV in tau radians
+        # It's 110° and 1 tau radians is a full circle so it's an easy conversion that way
+        # tau = 2pi
+        self.CAMERA_FOV       = 110.0/360.0;
     
         # TSS code sample expanded from this doc: https://github.com/ros2/message_filters/blob/541d8a5009b14aaae4d9fe52e101273e428bb5d0/index.rst
         # Subscribe to the depth camera and the colour camera
@@ -110,9 +127,22 @@ class IdentifyCubes(Node):
                 # This doesn't tell us if we have exactly one cube, but it still gives us info
                 ratio              = bnd_w / bnd_h;
                 # Get the distance to the cube
-                # raise BaseException(bnd_centroid_depth, bnd_centroid);
-                # print(f"b {bnd_centroid}, bd {bnd_centroid_depth}, scale {depth_ratio}, ds {depth_img.shape}, cvs {cv_image.shape[0:2]}");
                 dist               = depth_img[bnd_centroid_depth[1], bnd_centroid_depth[0]];
+
+                # We now want to also figure out what (approximate) heading our cube has
+                # Normalise around the centre of the screen
+                # This could be improved by correcting for distortion, but approximations are ok for our application
+                heading            = ((bnd_centroid[0] / cv_image.shape[1]) * self.CAMERA_FOV) - (self.CAMERA_FOV * 0.5);
+
+                # If we've got a heading and a distance we can use basic trigonometry to find the
+                # offset in x and y coordinates to that cube centroid
+                # We also need to convert our heading (which is in tau radians) to radians
+                offset             = ( dist * np.sin(heading * 2 * np.pi), dist * np.cos(heading * 2 * np.pi) );
+        
+                # Get an absolute pose of the cube according to our world SLAM map
+                cube_pose          = np.add(offset, (self.cam2world.transform.translation.y, self.cam2world.transform.translation.x));
+
+                # print(f"x {self.cam2world.transform.translation.x}, y {self.cam2world.transform.translation.y}")
 
                 
                 # Draw the (simplified) outline of our contour in black
@@ -138,7 +168,7 @@ class IdentifyCubes(Node):
 
                 if (isCube):
                     # Print data into the image at the origin of the bounding box
-                    cv2.putText(cv_image, f"d: {dist:.2f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
+                    cv2.putText(cv_image, f"h: {heading*360:.2f}, d: {dist:.2f}, x: {cube_pose[0]:.2f}, y: {cube_pose[1]:.2f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
                 else:
                     # If it's the area marker, mark it on the overlay
                     if (isGreen):
@@ -154,6 +184,15 @@ class IdentifyCubes(Node):
 
         Requires both depth and colour information simultaneously
         """
+
+        try:
+            # Get the transform link between the camera and the world
+            self.cam2world = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_CAM, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
+        except tf2_ros.TransformException as ex:
+            # Log and ignore if we cannot get this transform
+            print(f"WARN: Could get camera->world ( {self.TF_FRAME_CAM} -> {self.TF_FRAME_WORLD} ) transform. {ex}");
+            return;
+
         
         try:
             # Get the ros2 topic data and use the CvBridge instance
