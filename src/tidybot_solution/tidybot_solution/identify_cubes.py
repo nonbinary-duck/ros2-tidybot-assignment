@@ -70,9 +70,13 @@ class IdentifyCubes(Node):
         """
         Process the provided mask and overlay data to cv_image, which python hopefully passes by reference
         """
+
+        # In case the depth camera is a different resolution to the colour sensor
+        # get a ratio between the two so we can scale pixel values
+        depth_ratio = np.divide(depth_img.shape, cv_image.shape[0:2]);
         
         # Find contours in our mask
-        contours, hierachy = cv2.findContours(
+        contours, hierarchy = cv2.findContours(
             # Since OpenCV 3.2 findContours doesn't modify the source image so we don't need .copy()
             mask,
             # Return a list hierarchy instead of a tree, since we're not interested in the hierarchy
@@ -85,18 +89,31 @@ class IdentifyCubes(Node):
             # This allows to compute the area (in pixels) of a contour
             area = cv2.contourArea(c);
             
-            # Only operate on contours of a specified area
-            if area > 100.0:
+            # Only operate on contours of a reasonable area
+            if area > 200.0:
 
                 # The bounding box and moments initialisation is taken from the OpenCV Python documentation
                 # https://docs.opencv.org/3.4/dd/d49/tutorial_py_contour_features.html
 
                 # Get the bounding box of this contour
                 bnd_x, bnd_y, bnd_w, bnd_h = cv2.boundingRect(c);
+                # Get the centroid of the bounding box (which is approximately the centroid of the cube)
+                bnd_centroid       = np.array( ( bnd_x + (bnd_w * 0.5), bnd_y + (bnd_h * 0.5) ) ).astype(int);
+                
+                # We use the depth ratio in case our pixels aren't exact
+                # We also cast in to integer so we can use it as an index
+                bnd_centroid_depth = np.multiply(bnd_centroid, depth_ratio).astype(int);
+                
                 # Check if the centre of that rectangle is above or below the centre of the image
-                isCube  = (bnd_y + (bnd_h * 0.5)) > (cv_image.shape[0] * 0.5);
+                isCube             = bnd_centroid[1] > (cv_image.shape[0] * 0.5);
                 # Get the aspect ratio of the cube, to figure out if it is actually one cube
-                ratio   = bnd_w / bnd_h;
+                # This doesn't tell us if we have exactly one cube, but it still gives us info
+                ratio              = bnd_w / bnd_h;
+                # Get the distance to the cube
+                # raise BaseException(bnd_centroid_depth, bnd_centroid);
+                # print(f"b {bnd_centroid}, bd {bnd_centroid_depth}, scale {depth_ratio}, ds {depth_img.shape}, cvs {cv_image.shape[0:2]}");
+                dist               = depth_img[bnd_centroid_depth[1], bnd_centroid_depth[0]];
+
                 
                 # Draw the (simplified) outline of our contour in black
                 cv2.drawContours(cv_image, contours=c, contourIdx=-1, color=(255, 0, 255), thickness=5);
@@ -110,9 +127,18 @@ class IdentifyCubes(Node):
                     thickness=2
                 );
 
+                # Draw the centroid as a thin circle
+                cv2.circle(
+                    cv_image,
+                    center=bnd_centroid,
+                    radius=5,
+                    color=(255,255,255),
+                    thickness=1
+                );
+
                 if (isCube):
                     # Print data into the image at the origin of the bounding box
-                    cv2.putText(cv_image, f"a: {area:.0f}, r: {ratio:.3f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
+                    cv2.putText(cv_image, f"d: {dist:.2f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
                 else:
                     # If it's the area marker, mark it on the overlay
                     if (isGreen):

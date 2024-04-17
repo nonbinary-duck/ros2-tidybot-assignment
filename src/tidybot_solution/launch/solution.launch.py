@@ -11,9 +11,6 @@ from launch_ros.actions import Node
 #
 
 def generate_launch_description():
-    # Line of code adapted from the nav2_bringup slam_launch.py file
-    tidybot_dir = get_package_share_directory('tidybot_solution');
-    
     # Initialise a launch description object to add to
     ld = LaunchDescription();
 
