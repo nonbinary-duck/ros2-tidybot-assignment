@@ -39,19 +39,38 @@ def generate_launch_description():
         )
     );
 
+
     ld.add_action(
-        # Include our Nav2 SLAM Toolbox launch description
+        # Include our Nav2 launch description
         IncludeLaunchDescription(
             PythonLaunchDescriptionSource([
                 PathJoinSubstitution([
                     FindPackageShare("nav2_bringup"),
                     "launch",
-                    "slam_launch.py"
+                    "navigation_launch.py"
                 ])
             ]),
             launch_arguments={
-                "slam_params_file": os.path.join( tidybot_dir, "params", "limo_mapper_params_online_sync.yaml" ),
+                "use_sim_time": "True",
                 "params_file": os.path.join( tidybot_dir, "params", "limo_nav2_params.yaml" )
+            }.items()
+        )
+    );
+    
+
+    ld.add_action(
+        # Include our SLAM Toolbox launch description
+        IncludeLaunchDescription(
+            PythonLaunchDescriptionSource([
+                PathJoinSubstitution([
+                    FindPackageShare("slam_toolbox"),
+                    "launch",
+                    "online_async_launch.py"
+                ])
+            ]),
+            launch_arguments={
+                "use_sim_time": "True",
+                "slam_params_file": os.path.join( tidybot_dir, "params", "limo_mapper_params_online_sync.yaml" )
             }.items()
         )
     );
@@ -63,7 +82,7 @@ def generate_launch_description():
             executable="rviz2",
             arguments=[
                 "-d",
-                os.path.join( tidybot_dir, "rviz", "tidybot.rviz" )
+                os.path.join( tidybot_dir, "rviz", "tidybot_nav.rviz" )
             ]
         )
     );
