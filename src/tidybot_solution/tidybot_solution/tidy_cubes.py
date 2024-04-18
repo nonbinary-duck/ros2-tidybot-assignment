@@ -25,6 +25,7 @@ class State(enum.Enum):
     TIDYING_COMPLETE = 0;
     # The state when we are actively pushing a cube
     # PUSHING_CUBE -> RETURNING_HOME when target reached
+    # (alternatively) PUSHING_CUBE -> RETURNING_HOME if the robot gets lost (this sometimes happens)
     PUSHING_CUBE     = 1;
     # When we are looking for a cube to push
     # SEARCHING_CUBE -> ALIGNING_CUBE when cube found
@@ -33,13 +34,17 @@ class State(enum.Enum):
     SEARCHING_CUBE = 2;
     # When we are preparing to push a cube
     # ALIGNING_CUBE -> PUSHING_CUBE
+    # (alternatively) ALIGNING_CUBE -> SEARCHING_CUBE if the cube gets lost (this should never happen)
     ALIGNING_CUBE    = 4;
+    # Wait for a bit
+    # WAIT_AFTER_HOME -> SEARCHING_CUBE
+    WAIT_AFTER_HOME = 5;
     # When we've finished pushing a cube and want to return home
     # RETURNING_HOME -> SEARCHING_CUBE
-    RETURNING_HOME   = 5;
+    RETURNING_HOME   = 6;
     # The state to begin in
     # START_STATE -> RETURNING_HOME
-    START_STATE      = 6;
+    START_STATE      = 7;
 
 
 class TidyCubes(Node):
@@ -69,24 +74,34 @@ class TidyCubes(Node):
         # and we need to know when we've concluded the goal it last set
         self.waiting_for_nav = False;
         self.goals_sent      = 0;
-        # The time elapsed since we started searching left or right
+        # The time elapsed since we started searching or waiting
         self.time_elapsed    = 0.0;
+        # Variables to make sure we don't get lost pushing
+        self.last_pos        = [0.0,0.0];
+        self.time_since_move = 0.0;
 
         # Setup some "constants"
         # Relevant TF frames
-        self.TF_FRAME_WORLD  = "map";
-        self.TF_FRAME_CAM    = "depth_camera_link";
-        # Always send 3 goals
-        self.SEND_N_GOALS    = 3;
+        self.TF_FRAME_WORLD          = "map";
+        self.TF_FRAME_CAM            = "depth_camera_link";
+        # Always send n goals
+        self.SEND_N_GOALS            = 5;
         # Search for at most 12 seconds then conclude there are no cubes
-        self.MAX_SEARCH_TIME = 12.0;
+        self.MAX_SEARCH_TIME         = 12.0;
         # We receive cubes at exactly 10Hz
-        self.CUBE_FREQUENCY  = 10.0;
+        self.CUBE_FREQUENCY          = 10.0;
         # Acceptable heading in tau radians
-        self.ACCEPTABLE_HEADING = 5.0/360.0;
+        self.ACCEPTABLE_HEADING      = 5.0/360.0;
         # Smallest angular velocity
-        self.BASE_ANGULAR_VEL   = 0.2;
-        self.DIST_TO_WALL       = 1.5;
+        self.BASE_ANGULAR_VEL        = 0.2;
+        self.DIST_TO_WALL            = 1.5;
+        self.ACCEPTABLE_DIST_TO_WALL = 1.1;
+        # The time after which from the pushing state to move into the return home state
+        self.MAX_NO_MOVEMENT_TIME    = 5.0;
+        # What counts as having moved
+        self.MOVEMENT_THRESHOLD      = 0.05;
+        # Time to wait before searching
+        self.WAIT_TIME               = 7.5;
 
         # Register our callback for cube info
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
@@ -219,6 +234,9 @@ class TidyCubes(Node):
     
         # Reset time elapsed searching
         self.time_elapsed = 0.0;
+        # Reset movement info
+        self.last_pos        = [0.0,0.0];
+        self.time_since_move = 0.0;
     
     def send_many_state(self, chosen_cube = None):
         # Always make sure we action the state n times
@@ -265,17 +283,25 @@ class TidyCubes(Node):
             return;
 
 
-        # # If we're waiting for the navigation stack to complete a task,
-        # # then we have nothing to do here
-        # if (self.waiting_for_nav): return;
+        # Check if we're supposed to be waiting
+        if (self.state == State.WAIT_AFTER_HOME):
+
+            if (self.time_elapsed > self.WAIT_TIME):
+                # If we've finished the waiting period, send many state
+                self.transition_state(State.SEARCHING_CUBE);
+                self.send_many_state();
+                # Exit
+                return;
+
+            # If we still are waiting, record that
+            self.time_elapsed += np.power(self.CUBE_FREQUENCY, -1);
+            # Do nothing else
+            return;
+
 
         # If we're finished, take no action
         # It would be nice if python added switches
         if (self.state == State.TIDYING_COMPLETE): return;
-        elif (self.state == State.PUSHING_CUBE):
-            # Make sure we've sent enough states
-            self.send_many_state();
-            return;
             
     
         # If we've just started, then we first "return home"
@@ -291,18 +317,47 @@ class TidyCubes(Node):
             # If we're close to home, then go to the next state
             pos_x = np.abs(self.cam2world.transform.translation.x);
             pos_y = np.abs(self.cam2world.transform.translation.y);
-            if (pos_x < 0.15 and pos_y < 0.15):
+            if (pos_x < 0.2 and pos_y < 0.2):
                 # Go to the next state and send it
-                self.transition_state(State.SEARCHING_CUBE);
-                self.send_many_state();
+                self.transition_state(State.WAIT_AFTER_HOME);
             
             return;
         elif (self.state == State.PUSHING_CUBE):
-            pass
+            # Make sure we've sent enough states
+            self.send_many_state();
+
+            if (self.time_since_move > self.MAX_NO_MOVEMENT_TIME):
+                # If we've not moved in a while return home
+                self.transition_state(State.RETURNING_HOME);
+                self.send_many_state();
+                # Do not continue from here
+                return;
+            
+            # Check if we've moved
+            this_pos = [ self.cam2world.transform.translation.x, self.cam2world.transform.translation.y ];
+            dist_moved = np.abs(self.last_pos[0] - this_pos[0]) + np.abs(self.last_pos[1] - this_pos[1])
+            if (dist_moved >= self.MOVEMENT_THRESHOLD):
+                # Reset time since we last moved
+                self.time_since_move = 0.0;
+                # Reset the last pos if over the threshold to make sure slow movement doesn't break us
+                self.last_pos = this_pos;
+            else:
+                # Increment time since last move
+                self.time_since_move += np.power(self.CUBE_FREQUENCY, -1);
+            
+            # Get distance from centre
+            pos_y = np.abs(self.cam2world.transform.translation.y);
+            pos_x = np.abs(self.cam2world.transform.translation.x);
+            # If we've reached a wall then we can return to home state
+            if (pos_y > self.ACCEPTABLE_DIST_TO_WALL or pos_x > self.ACCEPTABLE_DIST_TO_WALL):
+                self.transition_state(State.RETURNING_HOME);
+                # Send this state
+                self.send_many_state();
                 
         # Make a list of cubes
         cubes = [];
         
+        # Compress our multiple lists into one for convenience
         for i in range(len(cubes_msg.is_green)):
             cubes.append({
                 "isGreen": cubes_msg.is_green[i],
@@ -322,7 +377,12 @@ class TidyCubes(Node):
                     self.time_elapsed += np.power(self.CUBE_FREQUENCY, -1);
                     # And continue searching
                     self.action_state();
-
+            # This state should never happen, but just in case it does...
+            elif (self.state == State.ALIGNING_CUBE):
+                self.transition_state(State.SEARCHING_CUBE);
+                self.send_many_state();
+            
+            # Do not continue / no need to continue
             return;
     
         # If we've found a cube and we're searching for one, pick one and change state
