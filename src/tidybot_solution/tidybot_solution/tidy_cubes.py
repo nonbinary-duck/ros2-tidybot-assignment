@@ -79,7 +79,7 @@ class TidyCubes(Node):
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
 
 
-    def send_goal(self, pos: typing.List[float], rotation: typing.List[float], world_space: bool = False):
+    def send_goal(self, pos: typing.List[float], rotation: typing.List[float], world_space: bool = True):
         """
         Send a target pose to nav2
 
@@ -109,7 +109,7 @@ class TidyCubes(Node):
         # Send our goal
         self.goal_pub.publish(goal);
 
-    def action_state(self):
+    def action_state(self, chosen_cube=None):
         if   (self.state == State.SEARCHING_CUBE_L):
             self.send_goal([0.0,0.0,0.0], [0.0, 0.0, np.pi]);
         
@@ -117,7 +117,7 @@ class TidyCubes(Node):
             self.send_goal([0.0,0.0,0.0], [0.0, 0.0, -np.pi]);
         
         elif (self.state == State.RETURNING_HOME):
-            self.send_goal([1.0,0.0,0.0], [0.0, 0.0, 0.0], world_space=True);
+            self.send_goal([1.0,0.0,0.0], [0.0, 0.0, 0.0]);
         
         elif (self.state == State.ALIGNING_CUBE):
             # If we're aligning with a cube, we obviously need that cube
@@ -136,13 +136,38 @@ class TidyCubes(Node):
 
             # Figure out what wall to go to
             if   (yaw > (0.25 * np.pi) and yaw < (0.75 * np.pi)):
-                target_pos = [pos.x, 1.4, 0.0];
+                target_pos = [0.0, 1.4, 0.0];
+                # Get the other coordinate for our target pos
+                target_pos[0] = 1.4 * ((yaw - (0.25 * np.pi)) / (0.5 * np.pi));
+                # Make sure it's on the correct size
+                if (yaw < (0.5 * np.pi)): target_pos[0] *= -1;
+            
             elif (yaw > (0.75 * np.pi) and yaw < (1.25 * np.pi)):
-                target_pos = [1.4, pos.y, 0.0];
+                target_pos = [1.4, 0.0, 0.0];
+            
+                # Get the other coordinate for our target pos
+                target_pos[1] = 1.4 * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
+                # Make sure it's on the correct size
+                if (yaw < (0.5 * np.pi)): target_pos[1] *= -1;
+            
             elif (yaw > (1.25 * np.pi) and yaw < (1.75 * np.pi)):
-                target_pos = [pos.x, -1.4, 0.0];
+                target_pos = [0.0, -1.4, 0.0];
+            
+                # Get the other coordinate for our target pos
+                target_pos[0] = 1.4 * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
+                # Make sure it's on the correct size
+                if (yaw < (0.5 * np.pi)): target_pos[0] *= -1;
             else:
-                target_pos = [-1.4, pos.y, 0.0];
+                target_pos = [-1.4, 0.0, 0.0];
+
+                # Get the other coordinate for our target pos
+                # For this function the yaw is either between 1.75 pi and 2 pi
+                # or between 0 pi and 0.25 pi
+                if (yaw > (1.75 * np.pi)):
+                    target_pos[1] = -1.4 * ((yaw - (1.75 * np.pi)) / (0.25 * np.pi));
+                else:
+                    target_pos[1] =  1.4 * (yaw / (0.25 * np.pi));
+            
             
             # Push forward
             self.send_goal(target_pos, [0.0, 0.0, euler[2]]);
