@@ -44,7 +44,7 @@ class IdentifyCubes(Node):
         self.TF_FRAME_CAM     = "depth_camera_link";
         # Value to add to colour for bounding box of banner
         self.BANNER_MODIFIER  = (0,0,128);
-        self.LOWER_LIGHTNESS  = 20;
+        self.LOWER_LIGHTNESS  = 64;
         self.UPPER_LIGHTNESS  = 255;
         self.LOWER_SATURATION = 150;
         self.UPPER_SATURATION = 255;
@@ -52,8 +52,8 @@ class IdentifyCubes(Node):
         #   The ranges are broad to accommodate the real world
         # Define red ranges
         self.LOWER_RED_LOWER = np.array((0,   self.LOWER_SATURATION, self.LOWER_LIGHTNESS));
-        # 28° (20) appears just in to orange to my eye & monitor
-        self.UPPER_RED_LOWER = np.array((20,  self.UPPER_SATURATION, self.UPPER_LIGHTNESS));
+        # 14° (10) appears just in to orange to my eye & monitor
+        self.UPPER_RED_LOWER = np.array((10,  self.UPPER_SATURATION, self.UPPER_LIGHTNESS));
 
         # Define the red ranges at the top of the scale
         # 330° (235) appears just in to pink to my eye & monitor
