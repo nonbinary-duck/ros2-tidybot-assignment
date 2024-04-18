@@ -70,7 +70,7 @@ class IdentifyCubes(Node):
         # tau = 2pi
         self.CAMERA_FOV       = 80.0/360.0;
         # The distance away after which a cube is considered sorted
-        self.CUBE_SORTED_DIST = 1.10;
+        self.CUBE_SORTED_DIST = 1.0;
     
         # TSS code sample expanded from this doc: https://github.com/ros2/message_filters/blob/541d8a5009b14aaae4d9fe52e101273e428bb5d0/index.rst
         # Subscribe to the depth camera and the colour camera
