@@ -101,7 +101,7 @@ class TidyCubes(Node):
         # What counts as having moved
         self.MOVEMENT_THRESHOLD      = 0.05;
         # Time to wait before searching
-        self.WAIT_TIME               = 7.5;
+        self.WAIT_TIME               = 12.5;
 
         # Register our callback for cube info
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
@@ -184,7 +184,7 @@ class TidyCubes(Node):
             if   (yaw > (0.25 * np.pi) and yaw < (0.75 * np.pi)):
                 target_pos = [0.0, self.DIST_TO_WALL, 0.0];
                 # Get the other coordinate for our target pos
-                target_pos[0] = self.DIST_TO_WALL * ((yaw - (0.25 * np.pi)) / (0.5 * np.pi));
+                target_pos[0] = 1.3 * ((yaw - (0.25 * np.pi)) / (0.5 * np.pi));
                 # Make sure it's on the correct size
                 if (yaw < (0.5 * np.pi)): target_pos[0] *= -1;
             
@@ -192,15 +192,15 @@ class TidyCubes(Node):
                 target_pos = [self.DIST_TO_WALL, 0.0, 0.0];
             
                 # Get the other coordinate for our target pos
-                target_pos[1] = self.DIST_TO_WALL * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
+                target_pos[1] = 1.3 * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
                 # Make sure it's on the correct size
                 if (yaw < (0.5 * np.pi)): target_pos[1] *= -1;
             
             elif (yaw > (1.25 * np.pi) and yaw < (1.75 * np.pi)):
-                target_pos = [0.0, -self.DIST_TO_WALL, 0.0];
+                target_pos = [0.0, -1.3, 0.0];
             
                 # Get the other coordinate for our target pos
-                target_pos[0] = self.DIST_TO_WALL * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
+                target_pos[0] = 1.3 * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
                 # Make sure it's on the correct size
                 if (yaw < (0.5 * np.pi)): target_pos[0] *= -1;
             else:
@@ -210,9 +210,9 @@ class TidyCubes(Node):
                 # For this function the yaw is either between 1.75 pi and 2 pi
                 # or between 0 pi and 0.25 pi
                 if (yaw > (1.75 * np.pi)):
-                    target_pos[1] = -self.DIST_TO_WALL * ((yaw - (1.75 * np.pi)) / (0.25 * np.pi));
+                    target_pos[1] = -1.3 * ((yaw - (1.75 * np.pi)) / (0.25 * np.pi));
                 else:
-                    target_pos[1] =  self.DIST_TO_WALL * (yaw / (0.25 * np.pi));
+                    target_pos[1] =  1.3 * (yaw / (0.25 * np.pi));
             
             
             # Push forward
