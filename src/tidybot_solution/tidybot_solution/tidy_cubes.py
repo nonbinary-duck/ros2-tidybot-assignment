@@ -94,14 +94,16 @@ class TidyCubes(Node):
         self.ACCEPTABLE_HEADING      = 5.0/360.0;
         # Smallest angular velocity
         self.BASE_ANGULAR_VEL        = 0.2;
-        self.DIST_TO_WALL            = 1.5;
-        self.ACCEPTABLE_DIST_TO_WALL = 1.1;
+        self.DIST_TO_WALL            = 1.4;
+        self.ACCEPTABLE_DIST_TO_WALL = 1.2;
         # The time after which from the pushing state to move into the return home state
-        self.MAX_NO_MOVEMENT_TIME    = 5.0;
+        self.MAX_NO_MOVEMENT_TIME    = 7.5;
         # What counts as having moved
         self.MOVEMENT_THRESHOLD      = 0.05;
         # Time to wait before searching
-        self.WAIT_TIME               = 12.5;
+        self.WAIT_TIME               = 15.0;
+        self.USE_BAD_MOVEMENT        = True;
+        self.BAD_MOVEMENT_SPEED      = 0.1;
 
         # Register our callback for cube info
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
@@ -173,7 +175,7 @@ class TidyCubes(Node):
             # Publish this velocity
             self.vel_pub.publish(vel);
         
-        elif (self.state == State.PUSHING_CUBE):
+        elif (self.state == State.PUSHING_CUBE and (not self.USE_BAD_MOVEMENT)):
             # Get the pos of our robot
             pos        = self.cam2world.transform.translation;
             # Get the yaw of our robot and put in the range of 0->tau instead of -pi -> +pi
@@ -184,7 +186,7 @@ class TidyCubes(Node):
             if   (yaw > (0.25 * np.pi) and yaw < (0.75 * np.pi)):
                 target_pos = [0.0, self.DIST_TO_WALL, 0.0];
                 # Get the other coordinate for our target pos
-                target_pos[0] = 1.3 * ((yaw - (0.25 * np.pi)) / (0.5 * np.pi));
+                target_pos[0] = 1.0 * ((yaw - (0.25 * np.pi)) / (0.5 * np.pi));
                 # Make sure it's on the correct size
                 if (yaw < (0.5 * np.pi)): target_pos[0] *= -1;
             
@@ -192,15 +194,15 @@ class TidyCubes(Node):
                 target_pos = [self.DIST_TO_WALL, 0.0, 0.0];
             
                 # Get the other coordinate for our target pos
-                target_pos[1] = 1.3 * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
+                target_pos[1] = 1.0 * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
                 # Make sure it's on the correct size
                 if (yaw < (0.5 * np.pi)): target_pos[1] *= -1;
             
             elif (yaw > (1.25 * np.pi) and yaw < (1.75 * np.pi)):
-                target_pos = [0.0, -1.3, 0.0];
+                target_pos = [0.0, -1.0, 0.0];
             
                 # Get the other coordinate for our target pos
-                target_pos[0] = 1.3 * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
+                target_pos[0] = 1.0 * ((yaw - (0.75 * np.pi)) / (0.5 * np.pi));
                 # Make sure it's on the correct size
                 if (yaw < (0.5 * np.pi)): target_pos[0] *= -1;
             else:
@@ -210,13 +212,25 @@ class TidyCubes(Node):
                 # For this function the yaw is either between 1.75 pi and 2 pi
                 # or between 0 pi and 0.25 pi
                 if (yaw > (1.75 * np.pi)):
-                    target_pos[1] = -1.3 * ((yaw - (1.75 * np.pi)) / (0.25 * np.pi));
+                    target_pos[1] = -1.0 * ((yaw - (1.75 * np.pi)) / (0.25 * np.pi));
                 else:
-                    target_pos[1] =  1.3 * (yaw / (0.25 * np.pi));
+                    target_pos[1] =  1.0 * (yaw / (0.25 * np.pi));
             
             
             # Push forward
             self.send_goal(target_pos, [0.0, 0.0, yaw]);
+        elif (self.state == State.PUSHING_CUBE and self.USE_BAD_MOVEMENT):
+            # Move forward in to the cube
+            vel = geometry_msgs.msg.Twist();
+            vel.linear.x = self.BAD_MOVEMENT_SPEED;
+            vel.linear.y = 0.0;
+            vel.linear.z = 0.0;
+            
+            # Go straight
+            vel.angular.z = 0.0; vel.angular.x = 0.0; vel.angular.y = 0.0;
+
+            # Publish this velocity
+            self.vel_pub.publish(vel);
 
     def transition_state(self, new_state: State):
         """
@@ -324,7 +338,12 @@ class TidyCubes(Node):
             return;
         elif (self.state == State.PUSHING_CUBE):
             # Make sure we've sent enough states
-            self.send_many_state();
+            if (self.BAD_MOVEMENT_SPEED):
+                # Use the close loop
+                self.action_state();
+            else:
+                # Use the nav2
+                self.send_many_state();
 
             if (self.time_since_move > self.MAX_NO_MOVEMENT_TIME):
                 # If we've not moved in a while return home
