@@ -6,6 +6,7 @@
 # Written for humble
 # cv2 image types - http://wiki.ros.org/cv_bridge/Tutorials/ConvertingBetweenROSImagesAndOpenCVImagesPython
 
+import nav2_simple_commander.robot_navigator
 import rclpy
 from rclpy.node import Node
 
@@ -15,10 +16,13 @@ import tf2_ros
 import geometry_msgs.msg
 from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS and OpenCV Images
 
+import nav2_simple_commander
+
 import message_filters as mf
 import numpy as np
 import typing
 import enum
+
 
 class State(enum.Enum):
     # This state is when we can no longer find any cubes to push to the end
