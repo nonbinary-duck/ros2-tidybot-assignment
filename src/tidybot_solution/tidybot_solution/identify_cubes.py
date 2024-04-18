@@ -35,6 +35,7 @@ class IdentifyCubes(Node):
         self.tf_buffer   = tf2_ros.buffer.Buffer(cache_time=tf2_ros.Duration(seconds=5));
         # We setup a listener to fetch TF frames
         self.tf_listener = tf2_ros.transform_listener.TransformListener(self.tf_buffer, node=self);
+        # Setup a publisher for our cube info topic
         self.cube_pub    = self.create_publisher(CubeContext, "/cube_info", 10);
         
         # Setup some "constants"
