@@ -39,6 +39,9 @@ class State(enum.Enum):
     # When we've finished pushing a cube and want to return home
     # RETURNING_HOME -> SEARCHING_CUBE
     RETURNING_HOME   = 5;
+    # The state to begin in
+    # START_STATE -> SEARCHING_CUBE_L
+    START_STATE      = 6;
 
 
 class TidyCubes(Node):
@@ -58,11 +61,11 @@ class TidyCubes(Node):
         self.tf_listener     = tf2_ros.transform_listener.TransformListener(self.tf_buffer, node=self);
 
         # Setup a publisher to send goal poses to
-        self.goal_pub        = self.create_publisher(geometry_msgs.msg.PoseStamped, "/goal_pose");
+        self.goal_pub        = self.create_publisher(geometry_msgs.msg.PoseStamped, "/goal_pose", 10);
 
         # We are a finite-state machine so we need to store what state we're in
         # Begin with the SEARCHING_CUBE state
-        self.state           = State.SEARCHING_CUBE;
+        self.state           = State.START_STATE;
         # We also use the navigation stack for movement since it works quite well,
         # and we need to know when we've concluded the goal it last set
         self.waiting_for_nav = False;
@@ -137,6 +140,8 @@ class TidyCubes(Node):
         elif (new_state == State.PUSHING_CUBE):
             # Get the pos of our robot
             pos = self.cam2world.transform.translation;
+            # Get the yaw of our robot
+            yaw = tft.euler_from_quaternion(self.cam2world.transform.rotation)[2];
             # Get the distance to the wall
             # Push forward
             self.send_goal([0.0,0.0,0.0], [0.0, 0.0, euler[2]]);
@@ -161,6 +166,9 @@ class TidyCubes(Node):
             print(f"WARN: Could get camera->world ( {self.TF_FRAME_CAM} -> {self.TF_FRAME_WORLD} ) transform. {ex}");
             return;
 
+        self.get_logger().info( tft.euler_from_quaternion(self.cam2world.transform.rotation)[2]);
+        return;
+
         # # If we're waiting for the navigation stack to complete a task,
         # # then we have nothing to do here
         # if (self.waiting_for_nav): return;
@@ -169,7 +177,7 @@ class TidyCubes(Node):
         # It would be nice if python added switches
         if (self.state == State.TIDYING_COMPLETE): return;
         elif (self.state == State.SEARCHING_CUBE_L):
-            
+            pass;
     
         
         # Make a list of cubes
@@ -189,18 +197,18 @@ class TidyCubes(Node):
 
 
 def main(args=None):
-    print('Starting colour_contours.py');
+    print('Starting tidy_cubes.py');
 
     rclpy.init(args=args);
 
-    colour_contours = IdentifyCubes();
+    controller = TidyCubes();
 
-    rclpy.spin(colour_contours);
+    rclpy.spin(controller);
 
     # Destroy the node explicitly
     # (optional - otherwise it will be done automatically
     # when the garbage collector destroys the node object)
-    colour_contours.destroy_node();
+    controller.destroy_node();
     rclpy.shutdown();
 
 

@@ -23,6 +23,14 @@ def generate_launch_description():
     );
 
     ld.add_action(
+        # Launch our nodes
+        Node(
+            package="tidybot_solution",
+            executable="tidy_cubes"
+        )
+    );
+
+    ld.add_action(
         # Adjust the rate of the camera as specifying it through params file doesn't work
         ExecuteProcess(
             cmd=[[

@@ -272,7 +272,7 @@ class IdentifyCubes(Node):
         cv2.waitKey(1);
 
 def main(args=None):
-    print('Starting colour_contours.py');
+    print('Starting identify_cubes.py');
 
     rclpy.init(args=args);
 
