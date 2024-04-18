@@ -69,6 +69,8 @@ class IdentifyCubes(Node):
         # It's 80° and 1 tau radians is a full circle so it's an easy conversion that way
         # tau = 2pi
         self.CAMERA_FOV       = 80.0/360.0;
+        # The distance away after which a cube is considered sorted
+        self.CUBE_SORTED_DIST = 1.20;
     
         # TSS code sample expanded from this doc: https://github.com/ros2/message_filters/blob/541d8a5009b14aaae4d9fe52e101273e428bb5d0/index.rst
         # Subscribe to the depth camera and the colour camera
@@ -156,17 +158,26 @@ class IdentifyCubes(Node):
                     thickness=1
                 );
 
-                if (isCube):
+                # Figure out if the cube has been sorted
+                # This works because we always return to the centre of the arena
+                isSorted = dist > self.CUBE_SORTED_DIST;
+
+                if (isCube and (not isSorted)):
                     # Print data into the image at the origin of the bounding box
                     cv2.putText(cv_image, f"d: {dist:.2f}, h: {heading*360:.2f}", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 0, 0), thickness=2);
                     
                     # Store data about our cube
+                    # Only if it's not been sorted
                     cubes.append({
                         "isGreen": isGreen,
                         "area"   : area,
                         "heading": heading,
                         "dist"   : dist
                     });
+                elif (isCube):
+                    # Print data into the image at the origin of the bounding box
+                    # Tell the user that this cube is considered sorted
+                    cv2.putText(cv_image, f"Cube could be sorted!", org=(bnd_x, bnd_y), fontFace=cv2.FONT_HERSHEY_PLAIN, fontScale=1.25, color= (0, 255, 0), thickness=2);
                 else:
                     # If it's the area marker, mark it on the overlay
                     if (isGreen):
