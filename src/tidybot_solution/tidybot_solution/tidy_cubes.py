@@ -69,11 +69,22 @@ class TidyCubes(Node):
         # We also use the navigation stack for movement since it works quite well,
         # and we need to know when we've concluded the goal it last set
         self.waiting_for_nav = False;
+        self.goals_sent      = 0;
+        # The time elapsed since we started searching left or right
+        self.time_elapsed    = 0.0;
 
         # Setup some "constants"
         # Relevant TF frames
-        self.TF_FRAME_WORLD   = "map";
-        self.TF_FRAME_CAM     = "depth_camera_link";
+        self.TF_FRAME_WORLD  = "map";
+        self.TF_FRAME_CAM    = "depth_camera_link";
+        # Always send 3 goals
+        self.SEND_N_GOALS    = 3;
+        # Search each left and right for at most 3 seconds
+        self.MAX_SEARCH_TIME = 3.0;
+        # We receive cubes at exactly 10Hz
+        self.CUBE_FREQUENCY  = 10.0;
+        # Acceptable heading in tau radians
+        self.ACCEPTABLE_HEADING = 5.0/360.0;
 
         # Register our callback for cube info
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
@@ -111,13 +122,15 @@ class TidyCubes(Node):
 
     def action_state(self, chosen_cube=None):
         if   (self.state == State.SEARCHING_CUBE_L):
+            # Rotate
             self.send_goal([0.0,0.0,0.0], [0.0, 0.0, np.pi]);
         
         elif (self.state == State.SEARCHING_CUBE_R):
+            # Rotate
             self.send_goal([0.0,0.0,0.0], [0.0, 0.0, -np.pi]);
         
         elif (self.state == State.RETURNING_HOME):
-            self.send_goal([1.0,0.0,0.0], [0.0, 0.0, 0.0]);
+            self.send_goal([0.0,0.0,0.0], [0.0, 0.0, 0.0]);
         
         elif (self.state == State.ALIGNING_CUBE):
             # If we're aligning with a cube, we obviously need that cube
@@ -130,8 +143,8 @@ class TidyCubes(Node):
         elif (self.state == State.PUSHING_CUBE):
             # Get the pos of our robot
             pos        = self.cam2world.transform.translation;
-            # Get the yaw of our robot
-            yaw        = tft.euler_from_quaternion(self.cam2world.transform.rotation)[2] + np.pi;
+            # Get the yaw of our robot and put in the range of 0->tau instead of -pi -> +pi
+            yaw        = tft.euler_from_quaternion( [ self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w ] )[2] + np.pi;
             target_pos = [0.0,0.0,0.0];
 
             # Figure out what wall to go to
@@ -170,18 +183,50 @@ class TidyCubes(Node):
             
             
             # Push forward
-            self.send_goal(target_pos, [0.0, 0.0, euler[2]]);
+            self.send_goal(target_pos, [0.0, 0.0, yaw]);
 
-    def transition_state(self, new_state: State, chosen_cube = None):
+    def transition_state(self, new_state: State):
         """
-        Updates the current state into the next one, and execute associated actions
+        Updates the current state into the next one
         """
+
+        # Log the change
+        self.get_logger().info( f"STATE_CHANGE: Transitioning from {self.state} into {new_state}");
 
         # Update the state
         self.state = new_state;
+
+        # Set our counter back to zero (then add one because we've sent a goal)
+        self.goals_sent = 0;
     
-        # Take action on that state
-        self.action_state();
+    def send_many_state(self, chosen_cube = None):
+        # Always make sure we action the state n times
+        if (self.goals_sent <= self.SEND_N_GOALS):
+            # Send a goal
+            self.action_state(chosen_cube);
+            # Increment our counter
+            self.goals_sent += 1;
+    
+    def select_cube(self, cubes):
+        """
+        Select a cube according to heading and range preference
+        """
+        
+        selected_cube = cubes[0];
+        selected_preference = 100000;
+        
+        # Find a cube
+        for cube in cubes:
+            # Get a preference factor
+            # Prefer closer cubes in a similar heading to us
+            preference = (np.abs(cube["heading"]) * 20) + cube["range"];
+            # If our preference is better, update
+            if (preference < selected_preference):
+                selected_cube       = cube;
+                selected_preference = preference;
+    
+        # Return our selected cube
+        return selected_cube;
 
 
     def cube_callback(self, cubes_msg: CubeContext):
@@ -198,8 +243,6 @@ class TidyCubes(Node):
             print(f"WARN: Could get camera->world ( {self.TF_FRAME_CAM} -> {self.TF_FRAME_WORLD} ) transform. {ex}");
             return;
 
-        # self.get_logger().info( f"yaw: {tft.euler_from_quaternion([ self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w ])[2] + np.pi}");
-        # return;
 
         # # If we're waiting for the navigation stack to complete a task,
         # # then we have nothing to do here
@@ -208,15 +251,32 @@ class TidyCubes(Node):
         # If we're finished, take no action
         # It would be nice if python added switches
         if (self.state == State.TIDYING_COMPLETE): return;
-        elif (self.state == State.SEARCHING_CUBE_L):
-            pass;
+        elif (self.state == State.PUSHING_CUBE):
+            # Make sure we've sent enough states
+            self.send_many_state();
+            return;
+            
     
         # If we've just started, then we first "return home"
         if (self.state == State.START_STATE):
             self.transition_state(State.RETURNING_HOME);
+            # Send this state
+            self.send_many_state();
+        # If we're returning home, check if we're there
+        elif (self.state == State.RETURNING_HOME):
+            # Make sure we've sent enough states
+            self.send_many_state();
         
-        self.action_state();
-        
+            # If we're close to home, then go to the next state
+            pos_x = np.abs(self.cam2world.transform.translation.x);
+            pos_y = np.abs(self.cam2world.transform.translation.y);
+            if (pos_x < 0.09 and pos_y < 0.09):
+                # Go to the next state and send it (once)
+                self.transition_state(State.SEARCHING_CUBE_L);
+                self.send_many_state();
+            
+            return;
+                
         # Make a list of cubes
         cubes = [];
         
@@ -228,8 +288,39 @@ class TidyCubes(Node):
                 "range"  : cubes_msg.range[i]
             });
         
-        # If there is no new cube then we don't need to do anything
-        if (len(cubes) <= 0): return;
+        # If there is no new cube
+        if (len(cubes) <= 0):
+            return;
+
+
+            
+    
+        # If we've found a cube and we're searching for one, pick one and change state
+        if (self.state == State.SEARCHING_CUBE_L or self.state == State.SEARCHING_CUBE_R):
+            # Pick a cube
+            selected_cube = self.select_cube(cubes);
+
+            # Update our state
+            self.transition_state(State.ALIGNING_CUBE);
+            self.send_many_state(selected_cube);
+        
+        elif (self.state == State.ALIGNING_CUBE):
+            # Make the aligning process closed-loop
+            # Pick the same cube again (or a better one if found)
+            selected_cube = self.select_cube(cubes);
+
+            # If we're within an acceptable range of the cube, then change state
+            if (np.abs(selected_cube["heading"]) < self.ACCEPTABLE_HEADING):
+                # Change state
+                self.transition_state(State.PUSHING_CUBE);
+                self.send_many_state();
+            else:
+                # Otherwise, continue the alignment
+                self.action_state(selected_cube);
+
+
+            
+        
             
 
 
