@@ -9,6 +9,7 @@
 import rclpy
 from rclpy.node import Node
 
+import tf_transformations as tft # Alias to tft because that's a big name
 from tidybot_interfaces.msg import CubeContext
 import tf2_ros
 import sensor_msgs.msg
@@ -17,6 +18,7 @@ from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS a
 
 import message_filters as mf
 import numpy as np
+import typing
 import enum
 
 class State(enum.Enum):
@@ -27,6 +29,7 @@ class State(enum.Enum):
     PUSHING_CUBE     = 1;
     # When we are looking for a cube to push
     # SEARCHING_CUBE -> ALIGNING_CUBE when cube found
+    # SEARCHING_CUBE -> TIDYING_COMPLETE when no cube found
     # We have a state for turning left and one for turning right
     SEARCHING_CUBE_L = 2;
     SEARCHING_CUBE_R = 3;
@@ -50,16 +53,24 @@ class TidyCubes(Node):
         # TF init code adapted from docs https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Writing-A-Tf2-Listener-Py.html
         # Setup our TF listener
         # We initialise a buffer to store TF frames in, and cache 5 seconds worth
-        self.tf_buffer   = tf2_ros.buffer.Buffer(cache_time=tf2_ros.Duration(seconds=5));
+        self.tf_buffer       = tf2_ros.buffer.Buffer(cache_time=tf2_ros.Duration(seconds=5));
         # We setup a listener to fetch TF frames
-        self.tf_listener = tf2_ros.transform_listener.TransformListener(self.tf_buffer, node=self);
+        self.tf_listener     = tf2_ros.transform_listener.TransformListener(self.tf_buffer, node=self);
 
         # Setup a publisher to send goal poses to
-        self.goal_pub    = self.create_publisher(geometry_msgs.msg.PoseStamped, "/goal_pose");
+        self.goal_pub        = self.create_publisher(geometry_msgs.msg.PoseStamped, "/goal_pose");
 
         # We are a finite-state machine so we need to store what state we're in
         # Begin with the SEARCHING_CUBE state
-        self.state       = State.SEARCHING_CUBE;
+        self.state           = State.SEARCHING_CUBE;
+        # We also use the navigation stack for movement since it works quite well,
+        # and we need to know when we've concluded the goal it last set
+        self.waiting_for_nav = False;
+
+        # Setup some "constants"
+        # Relevant TF frames
+        self.TF_FRAME_WORLD   = "map";
+        self.TF_FRAME_CAM     = "depth_camera_link";
     
         # TSS code sample expanded from this doc: https://github.com/ros2/message_filters/blob/541d8a5009b14aaae4d9fe52e101273e428bb5d0/index.rst
         # Subscribe to the cube info and LiDAR but make sure we get the same topic at the same time
@@ -74,11 +85,66 @@ class TidyCubes(Node):
         tss.registerCallback(self.cube_callback);
 
 
-    def update_state(self, new_state: State):
+    def send_goal(self, pos: typing.List[float], rotation: typing.List[float]):
         """
-        Updates the current state into the next one
+        Send a target pose to nav2
+
+        Arguments:
+            pos      -- The target position in Cartesian coordinates (x,y)
+            rotation -- The target rotation in euler roll/pitch/yaw
         """
-        return 0;
+
+        # Get the quaternion rotation from the euler angles
+        rot_quat = tft.quaternion_from_euler(rotation[0], rotation[1], rotation[2]);
+
+        # Setup the message
+        goal                  = geometry_msgs.msg.PoseStamped();
+        # We use the same header information as our TF since that should be up-to-date
+        goal.header           = self.cam2world.header;
+        goal.pose.position.x  = pos[0];
+        goal.pose.position.y  = pos[1];
+        goal.pose.position.z  = pos[2];
+        goal.pose.orientation.x = rot_quat[0];
+        goal.pose.orientation.y = rot_quat[1];
+        goal.pose.orientation.z = rot_quat[2];
+        goal.pose.orientation.w = rot_quat[3];
+    
+        # Send our goal
+        self.goal_pub.publish(goal);
+
+    def tick_state(self, new_state: State, chosen_cube = None):
+        """
+        Updates the current state into the next one, and execute associated actions
+        """
+
+        if (new_state == State.SEARCHING_CUBE_L):
+            self.send_goal([0.0,0.0,0.0], [0.0, 0.0, np.pi]);
+        
+        elif (new_state == State.SEARCHING_CUBE_R):
+            self.send_goal([0.0,0.0,0.0], [0.0, 0.0, -np.pi]);
+        
+        elif (new_state == State.RETURNING_HOME):
+            self.send_goal([0.0,0.0,0.0], [0.0, 0.0, 0.0]);
+        
+        elif (new_state == State.ALIGNING_CUBE):
+            # If we're aligning with a cube, we obviously need that cube
+            assert(chosen_cube != None);
+            # Get the rotation of our robot
+            euler = tft.euler_from_quaternion( [ self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w ] );
+            # Set our robot to align with a cube
+            self.send_goal([0.0,0.0,0.0], [0.0, 0.0, euler[2] + (chosen_cube["heading"] * 2 * np.pi)]);
+        
+        elif (new_state == State.PUSHING_CUBE):
+            # Get the pos of our robot
+            pos = self.cam2world.transform.translation;
+            # Get the distance to the wall
+            # Push forward
+            self.send_goal([0.0,0.0,0.0], [0.0, 0.0, euler[2]]);
+
+
+
+        
+        self.state = new_state;
 
 
     def cube_callback(self, cubes_msg: CubeContext, scan: sensor_msgs.msg.LaserScan):
@@ -86,8 +152,25 @@ class TidyCubes(Node):
         The function to act on cube info
         """
 
+        # Attempt to get TF
+        try:
+            # Get the transform link between the camera and the world
+            self.cam2world = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_CAM, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
+        except tf2_ros.TransformException as ex:
+            # Log and ignore if we cannot get this transform
+            print(f"WARN: Could get camera->world ( {self.TF_FRAME_CAM} -> {self.TF_FRAME_WORLD} ) transform. {ex}");
+            return;
+
+        # # If we're waiting for the navigation stack to complete a task,
+        # # then we have nothing to do here
+        # if (self.waiting_for_nav): return;
+
         # If we're finished, take no action
+        # It would be nice if python added switches
         if (self.state == State.TIDYING_COMPLETE): return;
+        elif (self.state == State.SEARCHING_CUBE_L):
+            
+    
         
         # Make a list of cubes
         cubes = [];

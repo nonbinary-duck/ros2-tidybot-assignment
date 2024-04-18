@@ -40,8 +40,8 @@ class IdentifyCubes(Node):
         
         # Setup some "constants"
         # Relevant TF frames
-        self.TF_FRAME_WORLD   = "map"
-        self.TF_FRAME_CAM     = "depth_camera_link"
+        self.TF_FRAME_WORLD   = "map";
+        self.TF_FRAME_CAM     = "depth_camera_link";
         # Value to add to colour for bounding box of banner
         self.BANNER_MODIFIER  = (0,0,128);
         self.LOWER_LIGHTNESS  = 20;
@@ -186,6 +186,7 @@ class IdentifyCubes(Node):
         Requires both depth and colour information simultaneously
         """
 
+        # Attempt to get TF
         try:
             # Get the transform link between the camera and the world
             self.cam2world = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_CAM, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
