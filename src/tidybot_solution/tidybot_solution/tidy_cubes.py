@@ -40,7 +40,7 @@ class State(enum.Enum):
     # RETURNING_HOME -> SEARCHING_CUBE
     RETURNING_HOME   = 5;
     # The state to begin in
-    # START_STATE -> SEARCHING_CUBE_L
+    # START_STATE -> RETURNING_HOME
     START_STATE      = 6;
 
 
@@ -74,21 +74,12 @@ class TidyCubes(Node):
         # Relevant TF frames
         self.TF_FRAME_WORLD   = "map";
         self.TF_FRAME_CAM     = "depth_camera_link";
-    
-        # TSS code sample expanded from this doc: https://github.com/ros2/message_filters/blob/541d8a5009b14aaae4d9fe52e101273e428bb5d0/index.rst
-        # Subscribe to the cube info and LiDAR but make sure we get the same topic at the same time
-        tss = mf.TimeSynchronizer([
-            # The cube info
-            mf.Subscriber(self, CubeContext, "/cube_info"),
-            # The LiDAR scanner
-            mf.Subscriber(self, sensor_msgs.msg.LaserScan, "/scan")
-        ], queue_size=2);
 
-        # Register our callback
-        tss.registerCallback(self.cube_callback);
+        # Register our callback for cube info
+        self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
 
 
-    def send_goal(self, pos: typing.List[float], rotation: typing.List[float]):
+    def send_goal(self, pos: typing.List[float], rotation: typing.List[float], world_space: bool = False):
         """
         Send a target pose to nav2
 
@@ -104,6 +95,9 @@ class TidyCubes(Node):
         goal                  = geometry_msgs.msg.PoseStamped();
         # We use the same header information as our TF since that should be up-to-date
         goal.header           = self.cam2world.header;
+        # If we have a goal not for the world space, keep the frame relative to the robot
+        if (world_space): goal.header.frame_id = self.TF_FRAME_WORLD;
+        
         goal.pose.position.x  = pos[0];
         goal.pose.position.y  = pos[1];
         goal.pose.position.z  = pos[2];
@@ -115,21 +109,17 @@ class TidyCubes(Node):
         # Send our goal
         self.goal_pub.publish(goal);
 
-    def tick_state(self, new_state: State, chosen_cube = None):
-        """
-        Updates the current state into the next one, and execute associated actions
-        """
-
-        if (new_state == State.SEARCHING_CUBE_L):
+    def action_state(self):
+        if   (self.state == State.SEARCHING_CUBE_L):
             self.send_goal([0.0,0.0,0.0], [0.0, 0.0, np.pi]);
         
-        elif (new_state == State.SEARCHING_CUBE_R):
+        elif (self.state == State.SEARCHING_CUBE_R):
             self.send_goal([0.0,0.0,0.0], [0.0, 0.0, -np.pi]);
         
-        elif (new_state == State.RETURNING_HOME):
-            self.send_goal([0.0,0.0,0.0], [0.0, 0.0, 0.0]);
+        elif (self.state == State.RETURNING_HOME):
+            self.send_goal([1.0,0.0,0.0], [0.0, 0.0, 0.0], world_space=True);
         
-        elif (new_state == State.ALIGNING_CUBE):
+        elif (self.state == State.ALIGNING_CUBE):
             # If we're aligning with a cube, we obviously need that cube
             assert(chosen_cube != None);
             # Get the rotation of our robot
@@ -137,22 +127,39 @@ class TidyCubes(Node):
             # Set our robot to align with a cube
             self.send_goal([0.0,0.0,0.0], [0.0, 0.0, euler[2] + (chosen_cube["heading"] * 2 * np.pi)]);
         
-        elif (new_state == State.PUSHING_CUBE):
+        elif (self.state == State.PUSHING_CUBE):
             # Get the pos of our robot
-            pos = self.cam2world.transform.translation;
+            pos        = self.cam2world.transform.translation;
             # Get the yaw of our robot
-            yaw = tft.euler_from_quaternion(self.cam2world.transform.rotation)[2];
-            # Get the distance to the wall
+            yaw        = tft.euler_from_quaternion(self.cam2world.transform.rotation)[2] + np.pi;
+            target_pos = [0.0,0.0,0.0];
+
+            # Figure out what wall to go to
+            if   (yaw > (0.25 * np.pi) and yaw < (0.75 * np.pi)):
+                target_pos = [pos.x, 1.4, 0.0];
+            elif (yaw > (0.75 * np.pi) and yaw < (1.25 * np.pi)):
+                target_pos = [1.4, pos.y, 0.0];
+            elif (yaw > (1.25 * np.pi) and yaw < (1.75 * np.pi)):
+                target_pos = [pos.x, -1.4, 0.0];
+            else:
+                target_pos = [-1.4, pos.y, 0.0];
+            
             # Push forward
-            self.send_goal([0.0,0.0,0.0], [0.0, 0.0, euler[2]]);
+            self.send_goal(target_pos, [0.0, 0.0, euler[2]]);
 
+    def transition_state(self, new_state: State, chosen_cube = None):
+        """
+        Updates the current state into the next one, and execute associated actions
+        """
 
-
-        
+        # Update the state
         self.state = new_state;
+    
+        # Take action on that state
+        self.action_state();
 
 
-    def cube_callback(self, cubes_msg: CubeContext, scan: sensor_msgs.msg.LaserScan):
+    def cube_callback(self, cubes_msg: CubeContext):
         """
         The function to act on cube info
         """
@@ -166,8 +173,8 @@ class TidyCubes(Node):
             print(f"WARN: Could get camera->world ( {self.TF_FRAME_CAM} -> {self.TF_FRAME_WORLD} ) transform. {ex}");
             return;
 
-        self.get_logger().info( tft.euler_from_quaternion(self.cam2world.transform.rotation)[2]);
-        return;
+        # self.get_logger().info( f"yaw: {tft.euler_from_quaternion([ self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w ])[2] + np.pi}");
+        # return;
 
         # # If we're waiting for the navigation stack to complete a task,
         # # then we have nothing to do here
@@ -179,6 +186,11 @@ class TidyCubes(Node):
         elif (self.state == State.SEARCHING_CUBE_L):
             pass;
     
+        # If we've just started, then we first "return home"
+        if (self.state == State.START_STATE):
+            self.transition_state(State.RETURNING_HOME);
+        
+        self.action_state();
         
         # Make a list of cubes
         cubes = [];
