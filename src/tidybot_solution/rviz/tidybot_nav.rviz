@@ -7,6 +7,7 @@ Panels:
         - /Global Options1
         - /TF1
         - /TF1/Frames1
+        - /TF1/Frames1/cube_approx1
         - /TF1/Tree1
         - /Controller1/Local Costmap1
       Splitter Ratio: 0.5833333134651184
@@ -138,6 +139,8 @@ Visualization Manager:
           Value: false
         base_link:
           Value: true
+        cube_approx:
+          Value: true
         depth_camera_link:
           Value: false
         depth_link:
@@ -174,6 +177,8 @@ Visualization Manager:
               base_footprint:
                 {}
               depth_camera_link:
+                cube_approx:
+                  {}
                 depth_link:
                   {}
               front_left_wheel_link:
@@ -668,25 +673,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 1.3075051307678223
+      Distance: 1.7334058284759521
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: -0.22999903559684753
-        Y: -0.2660984396934509
-        Z: 0.26915088295936584
+        X: 0.11639576405286789
+        Y: -0.2991253137588501
+        Z: 0.21226896345615387
       Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.5247973799705505
+      Pitch: 0.5947973728179932
       Target Frame: <Fixed Frame>
       Value: Orbit (rviz_default_plugins)
-      Yaw: 5.045567512512207
+      Yaw: 4.505566120147705
     Saved: ~
 Window Geometry:
   Displays:

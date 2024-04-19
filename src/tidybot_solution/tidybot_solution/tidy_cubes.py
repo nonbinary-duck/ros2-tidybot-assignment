@@ -60,6 +60,10 @@ class TidyCubes(Node):
         # We setup a listener to fetch TF frames
         self.tf_listener     = tf2_ros.transform_listener.TransformListener(self.tf_buffer, node=self);
 
+        # TF publishing code from docs https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Adding-A-Frame-Py.html
+        # Setup a broadcaster for TF so we can publish the coords of our cube
+        self.tf_broadcaster  = tf2_ros.transform_broadcaster.TransformBroadcaster(self, 10);
+
         # Setup a publisher to send goal poses to
         self.goal_pub        = self.create_publisher(geometry_msgs.msg.PoseStamped, "/goal_pose", 10);
         self.vel_pub         = self.create_publisher(geometry_msgs.msg.Twist, "/cmd_vel", 10);
@@ -76,6 +80,12 @@ class TidyCubes(Node):
         # Variables to make sure we don't get lost pushing
         self.last_pos        = [0.0,0.0];
         self.time_since_move = 0.0;
+        # We've not selected a cube, but we need to know we've not selected a cube
+        self.selected_cube   = None;
+        # If we have begun pushing or not
+        self.begun_pushing   = False;
+        # If we've received TF frames yet
+        self.received_tf     = False;
 
         # We use the nav2 simple commander as it gives a programmatic way of dealing with nav2
         # https://navigation.ros.org/commander_api/index.html
@@ -86,6 +96,7 @@ class TidyCubes(Node):
         self.TF_FRAME_WORLD          = "map";
         self.TF_FRAME_CAM            = "depth_camera_link";
         self.TF_FRAME_BASE           = "base_link";
+        self.TF_FRAME_CUBE           = "cube_approx";
         # Always send n goals
         self.SEND_N_GOALS            = 5;
         # Search for at most 12 seconds then conclude there are no cubes
@@ -108,6 +119,36 @@ class TidyCubes(Node):
         # Register our callback for cube info
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
 
+
+    def publish_cube_tf(self, dist: float):
+        """
+        Publishes a tf2 transform exactly dist away from the depth sensor
+        """
+
+        # Code adapted from https://docs.ros.org/en/humble/Tutorials/Intermediate/Tf2/Adding-A-Frame-Py.html
+        
+        # Initialise a transform to modify
+        t = tf2_ros.TransformStamped();
+
+        # Take the stamp from our camera link TF frame
+        t.header.stamp           = self.cam2world.header.stamp;
+        # The parent frame
+        t.header.frame_id        = self.TF_FRAME_CAM;
+        # Our frame we're publishing
+        t.child_frame_id         = self.TF_FRAME_CUBE;
+        # Set the coordinates RELATIVE to the camera
+        # The fact that TFs are relative removes so much work (and 5 hours of me doing bad math) for us!!!
+        t.transform.translation.x = dist;
+        t.transform.translation.y = 0.0;
+        t.transform.translation.z = 0.0;
+        # "zero" rotation
+        t.transform.rotation.x    = 0.0;
+        t.transform.rotation.y    = 0.0;
+        t.transform.rotation.z    = 0.0;
+        t.transform.rotation.w    = 1.0;
+        
+        # Send our tf
+        self.tf_broadcaster.sendTransform(t);
 
     def get_goal(self, pos: typing.List[float], rotation: typing.List[float], world_space: bool = True):
         """
@@ -165,7 +206,7 @@ class TidyCubes(Node):
             vel.linear.z = 0.0;
             
             # Get if we should be turning left or right
-            # Go faster than the alignment
+            # Go faster than the alignment since we don't need precision
             vel.angular.z = self.BASE_ANGULAR_VEL * 2.0;
             vel.angular.x = 0.0; vel.angular.y = 0.0;
 
@@ -241,6 +282,13 @@ class TidyCubes(Node):
         # Halt the navigator
         self.navigator.cancelTask();
     
+        # Reset our selected cube (only if the next state isn't pushing or aligning where we need the selected cube)
+        if ((new_state != State.PUSHING_CUBE) and (new_state != State.ALIGNING_CUBE)): self.selected_cube = None;
+
+        # Always reset this
+        self.begun_pushing   = False;
+
+    
     
     def select_cube(self, cubes):
         """
@@ -274,6 +322,23 @@ class TidyCubes(Node):
             # Get the transform link between the camera and the world
             self.cam2world  = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_CAM, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
             self.body2world = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_BASE, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
+
+            if (not self.received_tf):
+                # If we've received all TFs, then we can safely set it true that we've received TF
+                self.received_tf = True;
+                
+                # For now just set our cube2world to be the camera
+                self.cube2world = self.cam2world;
+            else:
+                # If we have started to publish TF, we can get cube info
+                
+                # Publish the transform for our cube
+                # Either set it to zero relative to the camera or to the range of our selected cube if we have one
+                self.publish_cube_tf( 0.0 if self.selected_cube == None else self.selected_cube["range"]);
+        
+                # Receive our cube transform
+                self.cube2world = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_CUBE, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
+
         except tf2_ros.TransformException as ex:
             # Log and ignore if we cannot get this transform
             self.get_logger().warn(f"Could get camera->world ( {self.TF_FRAME_CAM} -> {self.TF_FRAME_WORLD} ) transform. {ex}");
@@ -289,6 +354,7 @@ class TidyCubes(Node):
             self.transition_state(State.RETURNING_HOME);
             # Send this state
             self.action_state();
+            return;
         # If we're returning home, check if we're there
         elif (self.state == State.RETURNING_HOME):
             # If we've reached home, then start searching
@@ -385,7 +451,7 @@ class TidyCubes(Node):
         if (self.state == State.SEARCHING_CUBE):
             # Pick a cube
             self.selected_cube = self.select_cube(cubes);
-
+            
             # Update our state
             self.transition_state(State.ALIGNING_CUBE);
             # We don't care about the counter here since we deal with this velocity
@@ -394,16 +460,18 @@ class TidyCubes(Node):
         elif (self.state == State.ALIGNING_CUBE):
             # Make the aligning process closed-loop
             # Pick the same cube again (or a better one if found)
-            selected_cube = self.select_cube(cubes);
+            self.selected_cube = self.select_cube(cubes);
 
             # If we're within an acceptable range of the cube, then change state
-            if (np.abs(selected_cube["heading"]) < self.ACCEPTABLE_HEADING):
+            if (np.abs(self.selected_cube["heading"]) < self.ACCEPTABLE_HEADING):
                 # Change state
                 self.transition_state(State.PUSHING_CUBE);
-                self.action_state();
+                # After we transition we send TF for our cube
+                self.publish_cube_tf(self.selected_cube["range"]);
+                # Don't request action yet, make sure the TF is setup first
             else:
                 # Otherwise, continue the alignment
-                self.action_state(selected_cube);
+                self.action_state(self.selected_cube);
 
 
             
