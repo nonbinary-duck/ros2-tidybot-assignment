@@ -363,8 +363,8 @@ velocity_smoother:
     # max_accel: [2.5, 0.0, 3.2]
     # max_decel: [-2.5, 0.0, -3.2]
     # Go slower
-    max_velocity: [0.075, 0.0, 0.25]
-    min_velocity: [-0.075, 0.0, -0.25]
+    max_velocity: [0.075, 0.0, 0.5]
+    min_velocity: [-0.075, 0.0, -0.5]
     max_accel: [1.0, 0.0, 1.2]
     max_decel: [-1.0, 0.0, -1.2]
     odom_topic: "odom"
