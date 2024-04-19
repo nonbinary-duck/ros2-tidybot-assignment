@@ -124,7 +124,7 @@ class TidyCubes(Node):
         self.GREEN_CUBE_X_COORD      = 1.35;
         # Distance away from the cube to path-find to
         # The abs(x) coord never exceeds 1.4
-        self.DIST_FROM_CUBE          = 0.35;
+        self.DIST_FROM_CUBE          = 0.4;
 
         # Register our callback for cube info
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
