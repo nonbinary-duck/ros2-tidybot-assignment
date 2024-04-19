@@ -125,7 +125,7 @@ class TidyCubes(Node):
         self.GREEN_CUBE_X_COORD      = 1.35;
         # Distance away from the cube to path-find to
         # The abs(x) coord never exceeds 1.4
-        self.DIST_FROM_CUBE          = 0.45;
+        self.DIST_FROM_CUBE          = 0.35;
 
         # Register our callback for cube info
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
@@ -269,7 +269,7 @@ class TidyCubes(Node):
             pose_behind_cube = self.get_goal(
                 pos     = behind_cube_pos,
                 # We also want to finish this pose looking at the cube
-                rotation= [ 0, 0, np.pi * (1.0 if (self.selected_cube["isGreen"]) else -1.0) ]
+                rotation= [ 0, 0, np.pi * (-1.0 if (self.selected_cube["isGreen"]) else +1.0) ]
             );
         
             # We also want a goal just before the cube, aligned to the wall
