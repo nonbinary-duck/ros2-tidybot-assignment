@@ -99,13 +99,12 @@ class TidyCubes(Node):
         self.TF_FRAME_CAM            = "depth_camera_link";
         self.TF_FRAME_BASE           = "base_link";
         self.TF_FRAME_CUBE           = "cube_approx";
-        # Always send n goals
-        self.SEND_N_GOALS            = 5;
-        # Search for at most 12 seconds then conclude there are no cubes
-        self.MAX_SEARCH_TIME         = 12.0;
+
+        # Search for at most 15 seconds then conclude there are no cubes
+        self.MAX_SEARCH_TIME         = 15.0;
         # We receive cubes at exactly 10Hz
         self.CUBE_FREQUENCY          = 10.0;
-        # Acceptable heading in tau radians
+        # Acceptable heading in tau (τ = 2π) radians
         self.ACCEPTABLE_HEADING      = 2.5/360.0;
         # Smallest angular velocity
         self.BASE_ANGULAR_VEL        = 0.2;
@@ -564,6 +563,11 @@ class TidyCubes(Node):
                     self.time_elapsed += np.power(self.CUBE_FREQUENCY, -1);
                     # And continue searching
                     self.action_state();
+            elif (self.state == State.ALIGNING_CUBE):
+                # If we're aligning to a cube but we have lost the cube, return to home
+                self.transition_state(State.RETURNING_HOME);
+                self.action_state();
+
             
             # Do not continue / no need to continue
             return;
