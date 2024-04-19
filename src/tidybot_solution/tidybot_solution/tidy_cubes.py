@@ -20,28 +20,29 @@ import enum
 
 class State(enum.Enum):
     # This state is when we can no longer find any cubes to push to the end
-    TIDYING_COMPLETE = 0;
+    TIDYING_COMPLETE  = 0;
     # The state when we are actively pushing a cube
     # PUSHING_CUBE -> RETURNING_HOME when target reached
     # (alternatively) PUSHING_CUBE -> RETURNING_HOME if the robot gets lost (this sometimes happens)
-    PUSHING_CUBE     = 1;
+    PUSHING_CUBE      = 1;
+    PUSHING_CUBE_WALL = 2;
     # When we are looking for a cube to push
     # SEARCHING_CUBE -> ALIGNING_CUBE when cube found
     # SEARCHING_CUBE -> TIDYING_COMPLETE when no cube found
     # We have a state for turning left and one for turning right
-    SEARCHING_CUBE  = 2;
+    SEARCHING_CUBE   = 3;
     # When we are preparing to push a cube
     # ALIGNING_CUBE -> PUSHING_CUBE
     # (alternatively) ALIGNING_CUBE -> SEARCHING_CUBE if the cube gets lost (this should never happen)
-    ALIGNING_CUBE    = 3;
+    ALIGNING_CUBE     = 4;
     # When we've finished pushing a cube and want to return home
     # RETURNING_HOME -> SEARCHING_CUBE
-    RETURNING_HOME   = 4;
+    RETURNING_HOME    = 5;
     # The state to begin in
     # START_STATE -> RETURNING_HOME
-    START_STATE      = 5;
+    START_STATE       = 6;
     # An illegal state for debugging
-    ILLEGAL          = 999;
+    ILLEGAL           = 999;
 
 
 class TidyCubes(Node):
@@ -122,7 +123,8 @@ class TidyCubes(Node):
         self.RED_CUBE_X_COORD        = -1.35;
         self.GREEN_CUBE_X_COORD      = 1.35;
         # Distance away from the cube to path-find to
-        self.DIST_FROM_CUBE          = 0.25;
+        # The abs(x) coord never exceeds 1.4
+        self.DIST_FROM_CUBE          = 0.45;
 
         # Register our callback for cube info
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
@@ -247,30 +249,42 @@ class TidyCubes(Node):
             # We assume that we've correctly aligned ourselves and that the cube is directly ahead of us
             #
             
-            # Get the pos of our robot and the cube
-            pos      = self.body2world.transform.translation;
-            cube_pos = self.cube2world.transform.translation;
+            # Get the pos of the cube
+            # cube_pos = self.tf_buffer.transform( p, self.TF_FRAME_WORLD );
+            cube_pos        = self.cube2world.transform.translation;
+            # Never exceed 1.4 for alignment
+            x_displacement  = np.minimum( np.abs(cube_pos.x) + self.DIST_FROM_CUBE, 1.4) - np.abs(cube_pos.x);
+            # Make it on the correct side of the cube
+            x_displacement *= -1.0 if (self.selected_cube["isGreen"]) else 1.0;
+            before_cube_pos = [ cube_pos.x + x_displacement, cube_pos.y, 0.0 ];
+            after_cube_pos  = [ (self.GREEN_CUBE_X_COORD if (self.selected_cube["isGreen"]) else self.RED_CUBE_X_COORD), cube_pos.y, 0.0 ];
         
             # We want one goal just before the cube, aligned to the wall
             # But we want this pose to make sure that the robot sees the cube in front of the target side
             pose_before_cube = self.get_goal(
-                pos     = [ cube_pos.x + ( self.DIST_FROM_CUBE * (1.0 if (self.selected_cube["isGreen"]) else -1.0) ), cube_pos.y, 0.0 ],
+                pos     = before_cube_pos,
                 # We also want to finish this pose looking at the cube
                 rotation= [ 0, 0, np.pi * (-1.0 if (self.selected_cube["isGreen"]) else +1.0) ]
             );
             
             # And another goal pushing directly in to the wall
-            pose_into_wall  =  self.get_goal(
-                pos     = [ (self.GREEN_CUBE_X_COORD if (self.selected_cube["isGreen"]) else self.RED_CUBE_X_COORD), cube_pos.y, 0.0 ],
+            # Calculate now and pass to the push function later
+            self.pose_into_wall  =  self.get_goal(
+                pos     = after_cube_pos,
                 # We also want to finish this pose looking at the wall
                 rotation= [ 0, 0, np.pi * (-1.0 if (self.selected_cube["isGreen"]) else +1.0) ]
             );
 
             # Debug path
-            self.get_logger().info( f"Cube: {[ cube_pos.x + ( self.DIST_FROM_CUBE * (-1.0 if (self.selected_cube['isGreen']) else +1.0) ), cube_pos.y, 0.0 ]}, Wall:{[(self.GREEN_CUBE_X_COORD if (self.selected_cube['isGreen']) else self.RED_CUBE_X_COORD), cube_pos.y, 0.0 ]}");
+            self.get_logger().info( f"Found {'green' if self.selected_cube['isGreen'] else 'red'} cube: {cube_pos}, before_cube: {before_cube_pos}, wall:{after_cube_pos}, dist: {self.selected_cube['range']}");
 
-            # Send the goals in a sequence
-            self.navigator.goThroughPoses( [ pose_before_cube, pose_into_wall ] );
+            
+
+            # Send the first goal
+            self.navigator.goToPose( pose_before_cube);
+        elif (self.state == State.PUSHING_CUBE_WALL and (not self.USE_BAD_MOVEMENT)):
+            # We've already localised the cube and formulated a path to follow, so just send the next pose
+            self.navigator.goToPose( self.pose_into_wall );
 
         elif (self.state == State.PUSHING_CUBE and self.USE_BAD_MOVEMENT):
             #
@@ -367,7 +381,7 @@ class TidyCubes(Node):
                 self.publish_cube_tf( 0.0 if self.selected_cube == None else self.selected_cube["range"]);
         
                 # Receive our cube transform
-                self.cube2world = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_CUBE, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
+                self.cube2world = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_WORLD, source_frame=self.TF_FRAME_CUBE, time=tf2_ros.Time(seconds=0));
 
         except tf2_ros.TransformException as ex:
             # Log and ignore if we cannot get this transform
@@ -422,47 +436,79 @@ class TidyCubes(Node):
         elif (self.state == State.PUSHING_CUBE):
             # If we've not yet begun pushing, start that now
             if (not self.begun_pushing):
-                # Start pushing
-                self.action_state();
-                # Log we've started
-                self.begun_pushing = True;
-                # That's all we do for this run
-                return;
+                # Give leeway for the cube message to arrive
+                if (self.time_elapsed > 0.5):
+                    # Start pushing
+                    self.action_state();
+                    # Log we've started
+                    self.begun_pushing = True;
+                    # That's all we do for this run
+                    return;
+                else:
+                    self.time_elapsed += np.power(self.CUBE_FREQUENCY, -1);
+                    return;
             
             # Continue to send velocities if we're using the bad movement
             if (self.USE_BAD_MOVEMENT):
+                # If we're using the basic movement, we don't have a path to check if we're reached the end
                 # Use the close loop
                 self.action_state();
 
-            if (self.time_since_move > self.MAX_NO_MOVEMENT_TIME):
-                # If we've not moved in a while return home
-                self.transition_state(State.RETURNING_HOME);
-                self.action_state();
-                # Do not continue from here
-                return;
+                if (self.time_since_move > self.MAX_NO_MOVEMENT_TIME):
+                    # If we've not moved in a while return home
+                    self.transition_state(State.RETURNING_HOME);
+                    self.action_state();
+                    # Do not continue from here
+                    return;
+                
+                # Check if we've moved
+                this_pos = [ self.cam2world.transform.translation.x, self.cam2world.transform.translation.y ];
+                dist_moved = np.abs(self.last_pos[0] - this_pos[0]) + np.abs(self.last_pos[1] - this_pos[1])
+                if (dist_moved >= self.MOVEMENT_THRESHOLD):
+                    # Reset time since we last moved
+                    self.time_since_move = 0.0;
+                    # Reset the last pos if over the threshold to make sure slow movement doesn't break us
+                    self.last_pos = this_pos;
+                else:
+                    # Increment time since last move
+                    self.time_since_move += np.power(self.CUBE_FREQUENCY, -1);
             
-            # Check if we've moved
-            this_pos = [ self.cam2world.transform.translation.x, self.cam2world.transform.translation.y ];
-            dist_moved = np.abs(self.last_pos[0] - this_pos[0]) + np.abs(self.last_pos[1] - this_pos[1])
-            if (dist_moved >= self.MOVEMENT_THRESHOLD):
-                # Reset time since we last moved
-                self.time_since_move = 0.0;
-                # Reset the last pos if over the threshold to make sure slow movement doesn't break us
-                self.last_pos = this_pos;
+                # Get distance from centre
+                pos_y = np.abs(self.cam2world.transform.translation.y);
+                pos_x = np.abs(self.cam2world.transform.translation.x);
+                # If we've reached a wall then we can return to home state
+                if (pos_y > self.ACCEPTABLE_DIST_TO_WALL or pos_x > self.ACCEPTABLE_DIST_TO_WALL):
+                    self.transition_state(State.RETURNING_HOME);
+                    # Send this state
+                    self.action_state();
             else:
-                # Increment time since last move
-                self.time_since_move += np.power(self.CUBE_FREQUENCY, -1);
+                # If we're using the complex movement then we want to do extra things
+                if (self.navigator.isTaskComplete()):
+                    # Now move to the wall after we've aligned ourselves
+                    self.transition_state(State.PUSHING_CUBE_WALL);
+                    # Send this state
+                    self.action_state();
+                elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(seconds=30)):
+                    # If we've been trying to align ourselves for 30 seconds, something has gone wrong
+                    # Take a shot in the dark and try to push against the wall to progress state
+                    self.transition_state(State.PUSHING_CUBE_WALL);
+                    # Send this state
+                    self.action_state();
             
-            # Get distance from centre
-            pos_y = np.abs(self.cam2world.transform.translation.y);
-            pos_x = np.abs(self.cam2world.transform.translation.x);
-            # If we've reached a wall then we can return to home state
-            if (pos_y > self.ACCEPTABLE_DIST_TO_WALL or pos_x > self.ACCEPTABLE_DIST_TO_WALL):
+            return;
+        elif (self.state == State.PUSHING_CUBE_WALL):
+            # A state only created by the complex movement path
+            if (self.navigator.isTaskComplete()):
+                # Now move to the wall after we've aligned ourselves
                 self.transition_state(State.RETURNING_HOME);
                 # Send this state
                 self.action_state();
-            
-            return;
+            elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(seconds=30)):
+                # If we've been trying to move ourselves for 30 seconds, something has gone wrong
+                # Return to home
+                self.transition_state(State.RETURNING_HOME);
+                # Send this state
+                self.action_state();
             
                 
         # Make a list of cubes
