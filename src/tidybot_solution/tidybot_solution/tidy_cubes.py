@@ -25,22 +25,23 @@ class State(enum.Enum):
     # PUSHING_CUBE -> RETURNING_HOME when target reached
     # (alternatively) PUSHING_CUBE -> RETURNING_HOME if the robot gets lost (this sometimes happens)
     PUSHING_CUBE      = 1;
-    PUSHING_CUBE_WALL = 2;
+    PUSHING_CUBE_ONE  = 2;
+    PUSHING_CUBE_WALL = 3;
     # When we are looking for a cube to push
     # SEARCHING_CUBE -> ALIGNING_CUBE when cube found
     # SEARCHING_CUBE -> TIDYING_COMPLETE when no cube found
     # We have a state for turning left and one for turning right
-    SEARCHING_CUBE   = 3;
+    SEARCHING_CUBE    = 4;
     # When we are preparing to push a cube
     # ALIGNING_CUBE -> PUSHING_CUBE
     # (alternatively) ALIGNING_CUBE -> SEARCHING_CUBE if the cube gets lost (this should never happen)
-    ALIGNING_CUBE     = 4;
+    ALIGNING_CUBE     = 5;
     # When we've finished pushing a cube and want to return home
     # RETURNING_HOME -> SEARCHING_CUBE
-    RETURNING_HOME    = 5;
+    RETURNING_HOME    = 6;
     # The state to begin in
     # START_STATE -> RETURNING_HOME
-    START_STATE       = 6;
+    START_STATE       = 7;
     # An illegal state for debugging
     ILLEGAL           = 999;
 
@@ -257,11 +258,23 @@ class TidyCubes(Node):
             # Make it on the correct side of the cube
             x_displacement *= -1.0 if (self.selected_cube["isGreen"]) else 1.0;
             before_cube_pos = [ cube_pos.x + x_displacement, cube_pos.y, 0.0 ];
+            behind_cube_pos = [
+                before_cube_pos[0],
+                ( np.abs(cube_pos.y) - self.DIST_FROM_CUBE ) * np.sign(cube_pos.y)
+                , 0.0
+            ];
             after_cube_pos  = [ (self.GREEN_CUBE_X_COORD if (self.selected_cube["isGreen"]) else self.RED_CUBE_X_COORD), cube_pos.y, 0.0 ];
+
+            # We want a goal to get behind the cube
+            pose_behind_cube = self.get_goal(
+                pos     = behind_cube_pos,
+                # We also want to finish this pose looking at the cube
+                rotation= [ 0, 0, np.pi * (1.0 if (self.selected_cube["isGreen"]) else -1.0) ]
+            );
         
-            # We want one goal just before the cube, aligned to the wall
+            # We also want a goal just before the cube, aligned to the wall
             # But we want this pose to make sure that the robot sees the cube in front of the target side
-            pose_before_cube = self.get_goal(
+            self.pose_before_cube = self.get_goal(
                 pos     = before_cube_pos,
                 # We also want to finish this pose looking at the cube
                 rotation= [ 0, 0, np.pi * (-1.0 if (self.selected_cube["isGreen"]) else +1.0) ]
@@ -278,10 +291,13 @@ class TidyCubes(Node):
             # Debug path
             self.get_logger().info( f"Found {'green' if self.selected_cube['isGreen'] else 'red'} cube: {cube_pos}, before_cube: {before_cube_pos}, wall:{after_cube_pos}, dist: {self.selected_cube['range']}");
 
-            
-
             # Send the first goal
-            self.navigator.goToPose( pose_before_cube);
+            self.navigator.goToPose( pose_behind_cube);
+        
+        elif (self.state == State.PUSHING_CUBE_ONE and (not self.USE_BAD_MOVEMENT)):
+            # We've already localised the cube and formulated a path to follow, so just send the next pose
+            self.navigator.goToPose( self.pose_before_cube );
+        
         elif (self.state == State.PUSHING_CUBE_WALL and (not self.USE_BAD_MOVEMENT)):
             # We've already localised the cube and formulated a path to follow, so just send the next pose
             self.navigator.goToPose( self.pose_into_wall );
@@ -485,17 +501,31 @@ class TidyCubes(Node):
                 # If we're using the complex movement then we want to do extra things
                 if (self.navigator.isTaskComplete()):
                     # Now move to the wall after we've aligned ourselves
-                    self.transition_state(State.PUSHING_CUBE_WALL);
+                    self.transition_state(State.PUSHING_CUBE_ONE);
                     # Send this state
                     self.action_state();
                 elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(seconds=30)):
                     # If we've been trying to align ourselves for 30 seconds, something has gone wrong
-                    # Take a shot in the dark and try to push against the wall to progress state
-                    self.transition_state(State.PUSHING_CUBE_WALL);
+                    # Take a shot in the dark and progress the state
+                    self.transition_state(State.PUSHING_CUBE_ONE);
                     # Send this state
                     self.action_state();
             
             return;
+        elif (self.state == State.PUSHING_CUBE_ONE):
+            # A state only created by the complex movement path
+            if (self.navigator.isTaskComplete()):
+                # Now move to the wall after we've aligned ourselves
+                self.transition_state(State.PUSHING_CUBE_WALL);
+                # Send this state
+                self.action_state();
+            elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(seconds=20)):
+                # If we've been trying to move ourselves for 30 seconds, something has gone wrong
+                # Return to home
+                self.transition_state(State.PUSHING_CUBE_WALL);
+                # Send this state
+                self.action_state();
+            
         elif (self.state == State.PUSHING_CUBE_WALL):
             # A state only created by the complex movement path
             if (self.navigator.isTaskComplete()):
@@ -503,7 +533,7 @@ class TidyCubes(Node):
                 self.transition_state(State.RETURNING_HOME);
                 # Send this state
                 self.action_state();
-            elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(seconds=30)):
+            elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(seconds=40)):
                 # If we've been trying to move ourselves for 30 seconds, something has gone wrong
                 # Return to home
                 self.transition_state(State.RETURNING_HOME);
