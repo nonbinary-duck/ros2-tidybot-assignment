@@ -113,8 +113,16 @@ class TidyCubes(Node):
         self.MAX_NO_MOVEMENT_TIME    = 7.5;
         # What counts as having moved
         self.MOVEMENT_THRESHOLD      = 0.05;
-        self.USE_BAD_MOVEMENT        = False;
         self.BAD_MOVEMENT_SPEED      = 0.1;
+        #
+        # Set this to True if using real robot!
+        #
+        self.USE_BAD_MOVEMENT        = False;
+        # Coordinates of where to try to push green and red cubes
+        self.RED_CUBE_X_COORD        = -1.35;
+        self.GREEN_CUBE_X_COORD      = 1.35;
+        # Distance away from the cube to path-find to
+        self.DIST_FROM_CUBE          = 0.25;
 
         # Register our callback for cube info
         self.create_subscription(CubeContext, "/cube_info", self.cube_callback, 10);
@@ -234,19 +242,41 @@ class TidyCubes(Node):
             self.vel_pub.publish(vel);
         
         elif (self.state == State.PUSHING_CUBE and (not self.USE_BAD_MOVEMENT)):
-            # Get the pos of our robot
-            pos        = self.cam2world.transform.translation;
-            # Get the yaw of our robot and put in the range of 0->tau instead of -pi -> +pi
-            yaw        = tft.euler_from_quaternion( [ self.cam2world.transform.rotation.x, self.cam2world.transform.rotation.y, self.cam2world.transform.rotation.z, self.cam2world.transform.rotation.w ] )[2] + np.pi;
-            target_pos = [0.0,0.0,0.0];
-
-            # Figure out the approximate coordinates of the cube
+            #
+            # If we do localise the cube
             # We assume that we've correctly aligned ourselves and that the cube is directly ahead of us
+            #
             
+            # Get the pos of our robot and the cube
+            pos      = self.body2world.transform.translation;
+            cube_pos = self.cube2world.transform.translation;
+        
+            # We want one goal just before the cube, aligned to the wall
+            # But we want this pose to make sure that the robot sees the cube in front of the target side
+            pose_before_cube = self.get_goal(
+                pos     = [ cube_pos.x + ( self.DIST_FROM_CUBE * (1.0 if (self.selected_cube["isGreen"]) else -1.0) ), cube_pos.y, 0.0 ],
+                # We also want to finish this pose looking at the cube
+                rotation= [ 0, 0, np.pi * (-1.0 if (self.selected_cube["isGreen"]) else +1.0) ]
+            );
             
-            # Push forward
-            # self.send_goal(target_pos, [0.0, 0.0, yaw]);
+            # And another goal pushing directly in to the wall
+            pose_into_wall  =  self.get_goal(
+                pos     = [ (self.GREEN_CUBE_X_COORD if (self.selected_cube["isGreen"]) else self.RED_CUBE_X_COORD), cube_pos.y, 0.0 ],
+                # We also want to finish this pose looking at the wall
+                rotation= [ 0, 0, np.pi * (-1.0 if (self.selected_cube["isGreen"]) else +1.0) ]
+            );
+
+            # Debug path
+            self.get_logger().info( f"Cube: {[ cube_pos.x + ( self.DIST_FROM_CUBE * (-1.0 if (self.selected_cube['isGreen']) else +1.0) ), cube_pos.y, 0.0 ]}, Wall:{[(self.GREEN_CUBE_X_COORD if (self.selected_cube['isGreen']) else self.RED_CUBE_X_COORD), cube_pos.y, 0.0 ]}");
+
+            # Send the goals in a sequence
+            self.navigator.goThroughPoses( [ pose_before_cube, pose_into_wall ] );
+
         elif (self.state == State.PUSHING_CUBE and self.USE_BAD_MOVEMENT):
+            #
+            # If we're not localising the cube
+            #
+            
             # Move forward in to the cube
             vel = geometry_msgs.msg.Twist();
             vel.linear.x = self.BAD_MOVEMENT_SPEED;
@@ -357,11 +387,20 @@ class TidyCubes(Node):
             return;
         # If we're returning home, check if we're there
         elif (self.state == State.RETURNING_HOME):
+            # Get distance from centre
+            pos_y = np.abs(self.body2world.transform.translation.y);
+            pos_x = np.abs(self.body2world.transform.translation.x);
+            
             # If we've reached home, then start searching
             if (self.navigator.isTaskComplete()):
-                # Start searching for the cube
-                self.transition_state(State.SEARCHING_CUBE);
-                self.action_state();
+                # Check if we're actually at the centre
+                if (pos_x < 0.2 and pos_y < 0.2):
+                    # Start searching for the cube
+                    self.transition_state(State.SEARCHING_CUBE);
+                    self.action_state();
+                else:
+                    # If we're not, start again
+                    self.transition_state(State.START_STATE);
 
             # I really wish we could use the navigation_duration from the website example
             elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(seconds=10)):
@@ -369,9 +408,6 @@ class TidyCubes(Node):
                 # So in that case, just cancel the movement if we've exceeded a given time
                 # and if we're confident we're somewhere in the centre of the map
 
-                # Get distance from centre
-                pos_y = np.abs(self.body2world.transform.translation.y);
-                pos_x = np.abs(self.body2world.transform.translation.x);
                 if (pos_x < 0.2 and pos_y < 0.2):
                     # Start searching for the cube
                     self.transition_state(State.SEARCHING_CUBE);
@@ -384,6 +420,15 @@ class TidyCubes(Node):
             
             return;
         elif (self.state == State.PUSHING_CUBE):
+            # If we've not yet begun pushing, start that now
+            if (not self.begun_pushing):
+                # Start pushing
+                self.action_state();
+                # Log we've started
+                self.begun_pushing = True;
+                # That's all we do for this run
+                return;
+            
             # Continue to send velocities if we're using the bad movement
             if (self.USE_BAD_MOVEMENT):
                 # Use the close loop
