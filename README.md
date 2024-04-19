@@ -4,7 +4,7 @@
 
 Please install the nav2 stack and slam-toolbox:
 ```bash
-sudo apt install ros-humble-tf2-tools ros-humble-tf2-py ros-humble-tf-transformations ros-humble-tf2 ros-humble-nav2-bringup ros-humble-slam-toolbox ros-humble-moveit
+sudo apt install ros-humble-tf2-tools ros-humble-tf2-py ros-humble-tf-transformations ros-humble-tf2 ros-humble-nav2-bringup ros-humble-slam-toolbox ros-humble-moveit ros-humble-nav2-simple-commander
 ```
 
 Also install python packages:

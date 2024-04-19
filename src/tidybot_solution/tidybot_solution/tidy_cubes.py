@@ -1,22 +1,16 @@
 #!/usr/bin/env python
 
-# This script is expanded from the colour_contours.py script provided, accessible at below link:
-# https://github.com/LCAS/teaching/blob/ee333a18b1717a8da0e8a981e216995fe1699fcb/cmp3103m_ros2_code_fragments/cmp3103m_ros2_code_fragments/colour_contours.py
-
-# Written for humble
-# cv2 image types - http://wiki.ros.org/cv_bridge/Tutorials/ConvertingBetweenROSImagesAndOpenCVImagesPython
-
-import nav2_simple_commander.robot_navigator
 import rclpy
+from rclpy.duration import Duration # It's unfortunate that we have to use this class a lot, so import the object we need
 from rclpy.node import Node
 
-import tf_transformations as tft # Alias to tft because that's a big name
-from tidybot_interfaces.msg import CubeContext
 import tf2_ros
 import geometry_msgs.msg
-from cv_bridge import CvBridge, CvBridgeError # Package to convert between ROS and OpenCV Images
+import tf_transformations as tft # Alias to tft because that's a big name
+import nav2_simple_commander.robot_navigator as nav2sc # Alias because it's a long name
 
-import nav2_simple_commander
+from tidybot_interfaces.msg import CubeContext
+
 
 import message_filters as mf
 import numpy as np
@@ -40,9 +34,6 @@ class State(enum.Enum):
     # ALIGNING_CUBE -> PUSHING_CUBE
     # (alternatively) ALIGNING_CUBE -> SEARCHING_CUBE if the cube gets lost (this should never happen)
     ALIGNING_CUBE    = 4;
-    # Wait for a bit
-    # WAIT_AFTER_HOME -> SEARCHING_CUBE
-    WAIT_AFTER_HOME = 5;
     # When we've finished pushing a cube and want to return home
     # RETURNING_HOME -> SEARCHING_CUBE
     RETURNING_HOME   = 6;
@@ -84,10 +75,15 @@ class TidyCubes(Node):
         self.last_pos        = [0.0,0.0];
         self.time_since_move = 0.0;
 
+        # We use the nav2 simple commander as it gives a programmatic way of dealing with nav2
+        # https://navigation.ros.org/commander_api/index.html
+        self.navigator = nav2sc.BasicNavigator();
+
         # Setup some "constants"
         # Relevant TF frames
         self.TF_FRAME_WORLD          = "map";
         self.TF_FRAME_CAM            = "depth_camera_link";
+        self.TF_FRAME_BASE           = "base_link";
         # Always send n goals
         self.SEND_N_GOALS            = 5;
         # Search for at most 12 seconds then conclude there are no cubes
@@ -104,9 +100,7 @@ class TidyCubes(Node):
         self.MAX_NO_MOVEMENT_TIME    = 7.5;
         # What counts as having moved
         self.MOVEMENT_THRESHOLD      = 0.05;
-        # Time to wait before searching
-        self.WAIT_TIME               = 15.0;
-        self.USE_BAD_MOVEMENT        = True;
+        self.USE_BAD_MOVEMENT        = False;
         self.BAD_MOVEMENT_SPEED      = 0.1;
 
         # Register our callback for cube info
@@ -125,23 +119,27 @@ class TidyCubes(Node):
         # Get the quaternion rotation from the euler angles
         rot_quat = tft.quaternion_from_euler(rotation[0], rotation[1], rotation[2]);
 
+        # Halt the navigator since we want to do this task now
+        self.navigator.cancelTask();
+        
         # Setup the message
-        goal                  = geometry_msgs.msg.PoseStamped();
+        goal                    = geometry_msgs.msg.PoseStamped();
         # We use the same header information as our TF since that should be up-to-date
-        goal.header           = self.cam2world.header;
+        goal.header             = self.cam2world.header;
         # If we have a goal not for the world space, keep the frame relative to the robot
         if (world_space): goal.header.frame_id = self.TF_FRAME_WORLD;
         
-        goal.pose.position.x  = pos[0];
-        goal.pose.position.y  = pos[1];
-        goal.pose.position.z  = pos[2];
+        goal.pose.position.x    = pos[0];
+        goal.pose.position.y    = pos[1];
+        goal.pose.position.z    = pos[2];
         goal.pose.orientation.x = rot_quat[0];
         goal.pose.orientation.y = rot_quat[1];
         goal.pose.orientation.z = rot_quat[2];
         goal.pose.orientation.w = rot_quat[3];
     
         # Send our goal
-        self.goal_pub.publish(goal);
+        self.navigator.goToPose(goal);
+    
 
     def action_state(self, chosen_cube=None):
         if   (self.state == State.SEARCHING_CUBE):
@@ -153,7 +151,7 @@ class TidyCubes(Node):
             
             # Get if we should be turning left or right
             # Go faster than the alignment
-            vel.angular.z = self.BASE_ANGULAR_VEL * 5;
+            vel.angular.z = self.BASE_ANGULAR_VEL * 2.0;
             vel.angular.x = 0.0; vel.angular.y = 0.0;
 
             # Publish this velocity
@@ -163,21 +161,24 @@ class TidyCubes(Node):
             self.send_goal([0.0,0.0,0.0], [0.0, 0.0, 0.0]);
         
         elif (self.state == State.ALIGNING_CUBE):
-            # # If we're aligning with a cube, we obviously need that cube
+            # If we're aligning with a cube, we obviously need that cube
             assert(chosen_cube != None);
-            
-            # Setup a velocity to angle toward the cube
-            vel = geometry_msgs.msg.Twist();
-            vel.linear.x = 0.0;
-            vel.linear.y = 0.0;
-            vel.linear.z = 0.0;
-            
-            # Get if we should be turning left or right
-            vel.angular.z = (self.BASE_ANGULAR_VEL * -1) if (chosen_cube["heading"] > 0) else self.BASE_ANGULAR_VEL;
-            vel.angular.x = 0.0; vel.angular.y = 0.0;
 
-            # Publish this velocity
-            self.vel_pub.publish(vel);
+            # Spin to where our cube is located (approximately)
+            self.navigator.spin(chosen_cube["heading"] * np.pi * 2, time_allowance=10);
+            
+            # # Setup a velocity to angle toward the cube
+            # vel = geometry_msgs.msg.Twist();
+            # vel.linear.x = 0.0;
+            # vel.linear.y = 0.0;
+            # vel.linear.z = 0.0;
+            
+            # # Get if we should be turning left or right
+            # vel.angular.z = (self.BASE_ANGULAR_VEL * -1) if (chosen_cube["heading"] > 0) else self.BASE_ANGULAR_VEL;
+            # vel.angular.x = 0.0; vel.angular.y = 0.0;
+
+            # # Publish this velocity
+            # self.vel_pub.publish(vel);
         
         elif (self.state == State.PUSHING_CUBE and (not self.USE_BAD_MOVEMENT)):
             # Get the pos of our robot
@@ -255,14 +256,10 @@ class TidyCubes(Node):
         # Reset movement info
         self.last_pos        = [0.0,0.0];
         self.time_since_move = 0.0;
+
+        # Halt the navigator
+        self.navigator.cancelTask();
     
-    def send_many_state(self, chosen_cube = None):
-        # Always make sure we action the state n times
-        if (self.goals_sent <= self.SEND_N_GOALS):
-            # Send a goal
-            self.action_state(chosen_cube);
-            # Increment our counter
-            self.goals_sent += 1;
     
     def select_cube(self, cubes):
         """
@@ -294,28 +291,12 @@ class TidyCubes(Node):
         # Attempt to get TF
         try:
             # Get the transform link between the camera and the world
-            self.cam2world = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_CAM, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
+            self.cam2world  = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_CAM, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
+            self.body2world = self.tf_buffer.lookup_transform(target_frame=self.TF_FRAME_BASE, source_frame=self.TF_FRAME_WORLD, time=rclpy.time.Time());
         except tf2_ros.TransformException as ex:
             # Log and ignore if we cannot get this transform
-            print(f"WARN: Could get camera->world ( {self.TF_FRAME_CAM} -> {self.TF_FRAME_WORLD} ) transform. {ex}");
+            self.get_logger().warn(f"Could get camera->world ( {self.TF_FRAME_CAM} -> {self.TF_FRAME_WORLD} ) transform. {ex}");
             return;
-
-
-        # Check if we're supposed to be waiting
-        if (self.state == State.WAIT_AFTER_HOME):
-
-            if (self.time_elapsed > self.WAIT_TIME):
-                # If we've finished the waiting period, send many state
-                self.transition_state(State.SEARCHING_CUBE);
-                self.send_many_state();
-                # Exit
-                return;
-
-            # If we still are waiting, record that
-            self.time_elapsed += np.power(self.CUBE_FREQUENCY, -1);
-            # Do nothing else
-            return;
-
 
         # If we're finished, take no action
         # It would be nice if python added switches
@@ -326,33 +307,44 @@ class TidyCubes(Node):
         if (self.state == State.START_STATE):
             self.transition_state(State.RETURNING_HOME);
             # Send this state
-            self.send_many_state();
+            self.action_state();
         # If we're returning home, check if we're there
         elif (self.state == State.RETURNING_HOME):
-            # Make sure we've sent enough states
-            self.send_many_state();
-        
-            # If we're close to home, then go to the next state
-            pos_x = np.abs(self.cam2world.transform.translation.x);
-            pos_y = np.abs(self.cam2world.transform.translation.y);
-            if (pos_x < 0.2 and pos_y < 0.2):
-                # Go to the next state and send it
-                self.transition_state(State.WAIT_AFTER_HOME);
+            # If we've reached home, then start searching
+            if (self.navigator.isTaskComplete()):
+                # Start searching for the cube
+                self.transition_state(State.SEARCHING_CUBE);
+                self.action_state();
+            
+            elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(seconds=10)):
+                # Sometimes nav2 freaks out about wanting to rotate our robot
+                # So in that case, just cancel the movement if we've exceeded a given time
+                # and if we're confident we're somewhere in the centre of the map
+
+                # Get distance from centre
+                pos_y = np.abs(self.body2world.transform.translation.y);
+                pos_x = np.abs(self.body2world.transform.translation.x);
+                if (pos_x < 0.2 and pos_y < 0.2):
+                    # Start searching for the cube
+                    self.transition_state(State.SEARCHING_CUBE);
+                    self.action_state();
+            
+            elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(seconds=30)):
+                # If we're in a clearly illegal state, then hopefully starting the search will fix us
+                self.transition_state(State.SEARCHING_CUBE);
+                self.action_state();
             
             return;
         elif (self.state == State.PUSHING_CUBE):
-            # Make sure we've sent enough states
-            if (self.BAD_MOVEMENT_SPEED):
+            # Continue to send velocities if we're using the bad movement
+            if (self.USE_BAD_MOVEMENT):
                 # Use the close loop
                 self.action_state();
-            else:
-                # Use the nav2
-                self.send_many_state();
 
             if (self.time_since_move > self.MAX_NO_MOVEMENT_TIME):
                 # If we've not moved in a while return home
                 self.transition_state(State.RETURNING_HOME);
-                self.send_many_state();
+                self.action_state();
                 # Do not continue from here
                 return;
             
@@ -375,7 +367,27 @@ class TidyCubes(Node):
             if (pos_y > self.ACCEPTABLE_DIST_TO_WALL or pos_x > self.ACCEPTABLE_DIST_TO_WALL):
                 self.transition_state(State.RETURNING_HOME);
                 # Send this state
-                self.send_many_state();
+                self.action_state();
+            return;
+            
+        elif (self.state == State.ALIGNING_CUBE):
+            # Check if we're reached the goal rotation
+            if (self.navigator.isTaskComplete()):
+                # Go to the next state
+                self.transition_state(State.PUSHING_CUBE);
+                self.action_state();
+                return;
+            
+
+            # fed: nav2sc.NavigateToPose.Feedback = self.navigator.getFeedback();
+            # fed.nav
+
+            # I really wish we could use the navigation_duration from the website example
+            elif (Duration.from_msg(self.navigator.getFeedback().navigation_time) > Duration(30.0)):
+                # We've clearly gotten into an illegal state here, so reset
+                self.transition_state(State.RETURNING_HOME);
+                self.action_state();
+                return;
                 
         # Make a list of cubes
         cubes = [];
@@ -400,10 +412,10 @@ class TidyCubes(Node):
                     self.time_elapsed += np.power(self.CUBE_FREQUENCY, -1);
                     # And continue searching
                     self.action_state();
-            # This state should never happen, but just in case it does...
-            elif (self.state == State.ALIGNING_CUBE):
-                self.transition_state(State.SEARCHING_CUBE);
-                self.send_many_state();
+            # # This state should never happen, but just in case it does...
+            # elif (self.state == State.ALIGNING_CUBE):
+            #     self.transition_state(State.SEARCHING_CUBE);
+            #     self.action_state();
             
             # Do not continue / no need to continue
             return;
@@ -418,19 +430,19 @@ class TidyCubes(Node):
             # We don't care about the counter here since we deal with this velocity
             self.action_state(selected_cube);
         
-        elif (self.state == State.ALIGNING_CUBE):
-            # Make the aligning process closed-loop
-            # Pick the same cube again (or a better one if found)
-            selected_cube = self.select_cube(cubes);
+        # elif (self.state == State.ALIGNING_CUBE):
+        #     # Make the aligning process closed-loop
+        #     # Pick the same cube again (or a better one if found)
+        #     selected_cube = self.select_cube(cubes);
 
-            # If we're within an acceptable range of the cube, then change state
-            if (np.abs(selected_cube["heading"]) < self.ACCEPTABLE_HEADING):
-                # Change state
-                self.transition_state(State.PUSHING_CUBE);
-                self.send_many_state();
-            else:
-                # Otherwise, continue the alignment
-                self.action_state(selected_cube);
+        #     # If we're within an acceptable range of the cube, then change state
+        #     if (np.abs(selected_cube["heading"]) < self.ACCEPTABLE_HEADING):
+        #         # Change state
+        #         self.transition_state(State.PUSHING_CUBE);
+        #         self.action_state();
+        #     else:
+        #         # Otherwise, continue the alignment
+        #         self.action_state(selected_cube);
 
 
             
